@@ -413,7 +413,7 @@ const WorldviewLeftPanel = React.memo(function WorldviewLeftPanel({ data, active
                                                             {pikudTimeOffset === null || pikudTimeOffset === 0
                                                                 ? "LIVE"
                                                                 : (() => {
-                                                                    const mins = Math.abs(pikudTimeOffset);
+                                                                    const mins = Math.abs(pikudTimeOffset ?? 0);
                                                                     if (mins < 60) return `${mins}m ago`;
                                                                     const h = Math.floor(mins / 60);
                                                                     const m = mins % 60;
