@@ -156,18 +156,19 @@ def init_pikud_db():
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON alerts (timestamp)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_ts ON alerts (ts)")
+            conn.commit()
             # Migration: add ts column to existing DBs that predate this field
+            # Must run BEFORE creating idx_ts — ALTER TABLE must precede the index
             cols = [r[1] for r in conn.execute("PRAGMA table_info(alerts)").fetchall()]
             if "ts" not in cols:
                 conn.execute("ALTER TABLE alerts ADD COLUMN ts REAL")
                 logger.info("Pikud HaOref: migrated DB — added ts column")
-            conn.commit()
+                conn.commit()
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_ts ON alerts (ts)")
             # Backfill ts for any rows where it's NULL (from old schema)
             conn.execute("""
-                UPDATE alerts SET ts = (
-                    strftime('%s', substr(timestamp, 1, 19))
-                ) WHERE ts IS NULL AND timestamp IS NOT NULL
+                UPDATE alerts SET ts = CAST(strftime('%s', substr(timestamp, 1, 19)) AS REAL)
+                WHERE ts IS NULL AND timestamp IS NOT NULL
             """)
             conn.commit()
             conn.close()
