@@ -227,10 +227,10 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
         [activeLayers.military_bases, data?.military_bases]);
 
     // Pikud HaOref: use history slice when scrubbing, otherwise use live data from fast poll.
-    // Age buckets are computed at memo-build time (re-evaluated every fast poll ~15s):
-    //   0–2 min  → "hot"    #ef4444 bright red
-    //   2–10 min → "recent" #f97316 orange
-    //   10–30 min→ "old"    #eab308 amber
+    // Age buckets match Israeli shelter doctrine (stay sheltered 10 min after alert):
+    //   0–10 min → "hot"    #ef4444 red    — shelter-in-place window
+    //   10–20 min→ "recent" #f97316 orange — recently cleared
+    //   20–30 min→ "old"    #eab308 amber  — fading
     //   >30 min  → dropped from live view (still in SQLite for scrubber)
     const pikudAlertsGeoJSON = useMemo(() => {
         if (!activeLayers.pikud_alerts) return null;
@@ -243,8 +243,8 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
             // Drop alerts older than 30 minutes in live mode
             if (isLive && ageMins !== null && ageMins > 30) return [];
             const ageClass = !isLive || ageMins === null ? "hot"
-                : ageMins < 2  ? "hot"
-                : ageMins < 10 ? "recent"
+                : ageMins < 10 ? "hot"
+                : ageMins < 20 ? "recent"
                 : "old";
             return [{
                 type: "Feature" as const,
