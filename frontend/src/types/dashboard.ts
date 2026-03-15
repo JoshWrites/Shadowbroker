@@ -291,6 +291,18 @@ export interface GDELTIncident {
   };
 }
 
+// ─── PIKUD HAOREF (ISRAEL RED ALERTS) ───────────────────────────────────────
+
+export interface PikudAlert {
+  city: string;
+  lat: number;
+  lng: number;
+  category: string;
+  timestamp: string;
+  /** Unix epoch seconds */
+  ts: number;
+}
+
 // ─── LIVEUAMAP ──────────────────────────────────────────────────────────────
 
 export interface LiveUAmapIncident {
@@ -422,6 +434,7 @@ export interface DashboardData {
   firms_fires?: FireHotspot[];
   datacenters?: DataCenter[];
   military_bases?: MilitaryBase[];
+  pikud_alerts?: PikudAlert[];
 }
 
 // ─── COMPONENT PROPS ────────────────────────────────────────────────────────
@@ -451,6 +464,7 @@ export interface ActiveLayers {
   internet_outages: boolean;
   datacenters: boolean;
   military_bases: boolean;
+  pikud_alerts: boolean;
 }
 
 export interface SelectedEntity {
@@ -497,4 +511,7 @@ export interface MaplibreViewerProps {
   viewBoundsRef?: React.RefObject<{ south: number; west: number; north: number; east: number } | null>;
   trackedSdr?: KiwiSDR | null;
   setTrackedSdr?: (sdr: KiwiSDR | null) => void;
+  // Pikud HaOref time scrubber (null = live mode)
+  pikudTimeOffset?: number | null;
+  pikudHistoryData?: PikudAlert[];
 }

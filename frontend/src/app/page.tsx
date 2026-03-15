@@ -19,7 +19,8 @@ import ErrorBoundary from "@/components/ErrorBoundary";
 import { DashboardDataProvider } from "@/lib/DashboardDataContext";
 import OnboardingModal, { useOnboarding } from "@/components/OnboardingModal";
 import ChangelogModal, { useChangelog } from "@/components/ChangelogModal";
-import type { SelectedEntity } from "@/types/dashboard";
+import type { SelectedEntity, PikudAlert } from "@/types/dashboard";
+import { API_BASE } from "@/lib/api";
 import { NOMINATIM_DEBOUNCE_MS } from "@/lib/constants";
 import { useDataPolling } from "@/hooks/useDataPolling";
 import { useReverseGeocode } from "@/hooks/useReverseGeocode";
@@ -163,6 +164,7 @@ export default function Dashboard() {
     internet_outages: false,
     datacenters: false,
     military_bases: false,
+    pikud_alerts: true,
   });
 
   // NASA GIBS satellite imagery state
@@ -172,6 +174,30 @@ export default function Dashboard() {
     return d.toISOString().slice(0, 10);
   });
   const [gibsOpacity, setGibsOpacity] = useState(0.6);
+
+  // Pikud HaOref time scrubber: null = live mode, negative number = minutes offset from now
+  const [pikudTimeOffset, setPikudTimeOffset] = useState<number | null>(null);
+  const [pikudHistoryData, setPikudHistoryData] = useState<PikudAlert[]>([]);
+  const [pikudDbRange, setPikudDbRange] = useState<{ earliest: number | null; latest: number | null }>({ earliest: null, latest: null });
+
+  // Fetch Pikud DB time range on mount
+  useEffect(() => {
+    fetch(`${API_BASE}/api/pikud-alerts/range`)
+      .then(r => r.json())
+      .then(d => setPikudDbRange({ earliest: d.earliest ?? null, latest: d.latest ?? null }))
+      .catch(() => {});
+  }, []);
+
+  // Fetch historical slice whenever offset changes
+  useEffect(() => {
+    if (pikudTimeOffset === null) { setPikudHistoryData([]); return; }
+    const until = Date.now() / 1000;
+    const from = until + pikudTimeOffset * 60;
+    fetch(`${API_BASE}/api/pikud-alerts/history?from_ts=${from}&until_ts=${until}`)
+      .then(r => r.json())
+      .then(d => setPikudHistoryData(d.alerts ?? []))
+      .catch(() => {});
+  }, [pikudTimeOffset]);
 
   const [effects, setEffects] = useState({
     bloom: true,
@@ -233,6 +259,8 @@ export default function Dashboard() {
           measurePoints={measurePoints}
           trackedSdr={trackedSdr}
           setTrackedSdr={setTrackedSdr}
+          pikudTimeOffset={pikudTimeOffset}
+          pikudHistoryData={pikudHistoryData}
         />
       </ErrorBoundary>
 
@@ -280,7 +308,7 @@ export default function Dashboard() {
           >
             {/* LEFT PANEL - DATA LAYERS */}
             <ErrorBoundary name="WorldviewLeftPanel">
-              <WorldviewLeftPanel data={data} activeLayers={activeLayers} setActiveLayers={setActiveLayers} onSettingsClick={() => setSettingsOpen(true)} onLegendClick={() => setLegendOpen(true)} gibsDate={gibsDate} setGibsDate={setGibsDate} gibsOpacity={gibsOpacity} setGibsOpacity={setGibsOpacity} onEntityClick={setSelectedEntity} onFlyTo={(lat, lng) => setFlyToLocation({ lat, lng, ts: Date.now() })} trackedSdr={trackedSdr} setTrackedSdr={setTrackedSdr} />
+              <WorldviewLeftPanel data={data} activeLayers={activeLayers} setActiveLayers={setActiveLayers} onSettingsClick={() => setSettingsOpen(true)} onLegendClick={() => setLegendOpen(true)} gibsDate={gibsDate} setGibsDate={setGibsDate} gibsOpacity={gibsOpacity} setGibsOpacity={setGibsOpacity} onEntityClick={setSelectedEntity} onFlyTo={(lat, lng) => setFlyToLocation({ lat, lng, ts: Date.now() })} trackedSdr={trackedSdr} setTrackedSdr={setTrackedSdr} pikudTimeOffset={pikudTimeOffset} setPikudTimeOffset={setPikudTimeOffset} pikudDbRange={pikudDbRange} />
             </ErrorBoundary>
           </motion.div>
 

@@ -57,7 +57,7 @@ import {
     type FlightLayerConfig,
 } from "@/components/map/geoJSONBuilders";
 
-const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, selectedEntity, onMouseCoords, onRightClick, regionDossier, regionDossierLoading, onViewStateChange, measureMode, onMeasureClick, measurePoints, gibsDate, gibsOpacity, viewBoundsRef, setTrackedSdr }: MaplibreViewerProps) => {
+const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, selectedEntity, onMouseCoords, onRightClick, regionDossier, regionDossierLoading, onViewStateChange, measureMode, onMeasureClick, measurePoints, gibsDate, gibsOpacity, viewBoundsRef, setTrackedSdr, pikudTimeOffset, pikudHistoryData }: MaplibreViewerProps) => {
     const mapRef = useRef<MapRef>(null);
     const [mapReady, setMapReady] = useState(false);
     const { theme } = useTheme();
@@ -225,6 +225,23 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
     const militaryBasesGeoJSON = useMemo(() =>
         activeLayers.military_bases ? buildMilitaryBasesGeoJSON(data?.military_bases) : null,
         [activeLayers.military_bases, data?.military_bases]);
+
+    // Pikud HaOref: use history slice when scrubbing, otherwise use live data from slow poll
+    const pikudAlertsGeoJSON = useMemo(() => {
+        if (!activeLayers.pikud_alerts) return null;
+        const alerts = (pikudTimeOffset !== null && pikudTimeOffset !== undefined && pikudTimeOffset !== 0)
+            ? (pikudHistoryData ?? [])
+            : (data?.pikud_alerts ?? []);
+        if (!alerts.length) return null;
+        return {
+            type: "FeatureCollection" as const,
+            features: alerts.map((a: any, i: number) => ({
+                type: "Feature" as const,
+                geometry: { type: "Point" as const, coordinates: [a.lng, a.lat] },
+                properties: { id: `pikud-${i}`, type: "pikud_alert", city: a.city, category: a.category, timestamp: a.timestamp, ts: a.ts },
+            })),
+        };
+    }, [activeLayers.pikud_alerts, data?.pikud_alerts, pikudTimeOffset, pikudHistoryData]);
 
     // Load Images into the Map Style once loaded
     const onMapLoad = useCallback((e: any) => {
@@ -593,7 +610,8 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
         internetOutagesGeoJSON && 'internet-outages-layer',
         dataCentersGeoJSON && 'datacenters-layer',
         militaryBasesGeoJSON && 'military-bases-layer',
-        firmsGeoJSON && 'firms-viirs-layer'
+        firmsGeoJSON && 'firms-viirs-layer',
+        pikudAlertsGeoJSON && 'pikud-alerts-layer',
     ].filter(Boolean) as string[];
 
 
@@ -1502,6 +1520,51 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                     </Source>
                 )}
 
+                {/* Pikud HaOref — Israel red alerts */}
+                {pikudAlertsGeoJSON && (
+                    <Source id="pikud-alerts" type="geojson" data={pikudAlertsGeoJSON as any}>
+                        <Layer
+                            id="pikud-alerts-pulse"
+                            type="circle"
+                            paint={{
+                                'circle-color': '#ef4444',
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 8, 6, 14, 10, 20],
+                                'circle-opacity': 0.25,
+                                'circle-stroke-width': 0,
+                            }}
+                        />
+                        <Layer
+                            id="pikud-alerts-layer"
+                            type="circle"
+                            paint={{
+                                'circle-color': '#ef4444',
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 4, 6, 7, 10, 10],
+                                'circle-opacity': 1,
+                                'circle-stroke-width': 1.5,
+                                'circle-stroke-color': '#fca5a5',
+                            }}
+                        />
+                        <Layer
+                            id="pikud-alerts-label"
+                            type="symbol"
+                            minzoom={6}
+                            layout={{
+                                'text-field': ['get', 'city'],
+                                'text-font': ['Noto Sans Bold'],
+                                'text-size': 10,
+                                'text-offset': [0, 1.4],
+                                'text-anchor': 'top',
+                                'text-allow-overlap': false,
+                            }}
+                            paint={{
+                                'text-color': '#fca5a5',
+                                'text-halo-color': 'rgba(0,0,0,0.9)',
+                                'text-halo-width': 1,
+                            }}
+                        />
+                    </Source>
+                )}
+
                 {/* Satellite positions — mission-type icons */}
                 {/* satellites: data pushed imperatively */}
                     <Source id="satellites" type="geojson" data={EMPTY_FC as any}>
@@ -1921,6 +1984,40 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                                 </div>
                                 <div className={`mt-1.5 text-[9px] ${footerCls} tracking-wider`}>
                                     MILITARY BASE — {branchLabel[base.branch] || base.branch.toUpperCase()}
+                                </div>
+                            </div>
+                        </Popup>
+                    );
+                })()}
+
+                {selectedEntity?.type === 'pikud_alert' && (() => {
+                    const alerts = (pikudTimeOffset !== null && pikudTimeOffset !== undefined && pikudTimeOffset !== 0)
+                        ? (pikudHistoryData ?? [])
+                        : (data?.pikud_alerts ?? []);
+                    const alert = alerts.find((_: any, i: number) => `pikud-${i}` === selectedEntity.id);
+                    if (!alert) return null;
+                    return (
+                        <Popup
+                            longitude={(alert as any).lng}
+                            latitude={(alert as any).lat}
+                            closeButton={false}
+                            closeOnClick={false}
+                            onClose={() => onEntityClick?.(null)}
+                            className="threat-popup"
+                            maxWidth="240px"
+                        >
+                            <div className="map-popup bg-[#1a0a0a] border border-red-500/50 text-[#fca5a5] min-w-[180px]">
+                                <div className="map-popup-title text-red-400 border-b border-red-500/20 pb-1">
+                                    {(alert as any).city}
+                                </div>
+                                <div className="map-popup-row">
+                                    Category: <span className="text-white">{(alert as any).category}</span>
+                                </div>
+                                <div className="map-popup-row">
+                                    Time: <span className="text-white">{(alert as any).timestamp}</span>
+                                </div>
+                                <div className="mt-1.5 text-[9px] text-red-600 tracking-wider">
+                                    RED ALERT — PIKUD HAOREF
                                 </div>
                             </div>
                         </Popup>

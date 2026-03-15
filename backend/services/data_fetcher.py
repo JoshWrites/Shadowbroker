@@ -46,6 +46,7 @@ from services.fetchers.geo import (  # noqa: F401
     fetch_ships, fetch_airports, find_nearest_airport, cached_airports,
     fetch_frontlines, fetch_gdelt, fetch_geopolitics, update_liveuamap,
 )
+from services.fetchers.pikud_haoref import fetch_pikud_haoref, fetch_pikud_history, init_pikud_db  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +87,7 @@ def update_slow_data():
         fetch_gdelt,
         fetch_datacenters,
         fetch_military_bases,
+        fetch_pikud_history,
     ]
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(slow_funcs)) as executor:
         futures = [executor.submit(func) for func in slow_funcs]
@@ -107,7 +109,11 @@ _scheduler = None
 def start_scheduler():
     global _scheduler
     init_db()
+    init_pikud_db()
     _scheduler = BackgroundScheduler(daemon=True)
+
+    # Pikud HaOref — poll live alerts every 5 seconds (rocket alerts are time-critical)
+    _scheduler.add_job(fetch_pikud_haoref, 'interval', seconds=5, id='pikud_live', max_instances=1, misfire_grace_time=10)
 
     # Fast tier — every 60 seconds
     _scheduler.add_job(update_fast_data, 'interval', seconds=60, id='fast_tier', max_instances=1, misfire_grace_time=30)

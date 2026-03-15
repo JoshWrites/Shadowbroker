@@ -42,6 +42,7 @@ from fastapi import FastAPI, Request, Response, Query, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from services.data_fetcher import start_scheduler, stop_scheduler, get_latest_data, source_timestamps
+from services.fetchers.pikud_haoref import query_alerts, get_db_time_range
 from services.ais_stream import start_ais_stream, stop_ais_stream
 from services.carrier_tracker import start_carrier_tracker, stop_carrier_tracker
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -306,10 +307,24 @@ async def live_data_slow(request: Request,
         "firms_fires": _f(d.get("firms_fires", [])),
         "datacenters": _f(d.get("datacenters", [])),
         "military_bases": _f(d.get("military_bases", [])),
+        "pikud_alerts": _f(d.get("pikud_alerts", [])),
         "freshness": dict(source_timestamps),
     }
     bbox_tag = f"{s},{w},{n},{e}" if has_bbox else "full"
     return _etag_response(request, payload, prefix=f"slow|{bbox_tag}|", default=str)
+
+@app.get("/api/pikud-alerts/history")
+@limiter.limit("30/minute")
+async def pikud_history(request: Request, from_ts: float = Query(None), until_ts: float = Query(None)):
+    """Return Pikud HaOref alerts between two Unix timestamps from SQLite."""
+    rows = query_alerts(from_ts, until_ts)
+    return {"alerts": rows}
+
+@app.get("/api/pikud-alerts/range")
+@limiter.limit("30/minute")
+async def pikud_db_range(request: Request):
+    """Return the earliest and latest timestamps stored in the Pikud SQLite DB."""
+    return get_db_time_range()
 
 @app.get("/api/debug-latest")
 @limiter.limit("30/minute")

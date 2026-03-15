@@ -41,6 +41,7 @@ const FRESHNESS_MAP: Record<string, string> = {
     firms: "firms_fires",
     internet_outages: "internet_outages",
     datacenters: "datacenters",
+    pikud_alerts: "pikud_alerts",
 };
 
 // POTUS fleet ICAO hex codes for client-side filtering
@@ -62,7 +63,7 @@ const POTUS_ICAOS: Record<string, { label: string; type: string }> = {
 };
 import type { DashboardData, ActiveLayers, SelectedEntity, KiwiSDR } from "@/types/dashboard";
 
-const WorldviewLeftPanel = React.memo(function WorldviewLeftPanel({ data, activeLayers, setActiveLayers, onSettingsClick, onLegendClick, gibsDate, setGibsDate, gibsOpacity, setGibsOpacity, onEntityClick, onFlyTo, trackedSdr, setTrackedSdr }: { data: DashboardData; activeLayers: ActiveLayers; setActiveLayers: React.Dispatch<React.SetStateAction<ActiveLayers>>; onSettingsClick?: () => void; onLegendClick?: () => void; gibsDate?: string; setGibsDate?: (d: string) => void; gibsOpacity?: number; setGibsOpacity?: (o: number) => void; onEntityClick?: (entity: SelectedEntity) => void; onFlyTo?: (lat: number, lng: number) => void; trackedSdr?: KiwiSDR | null; setTrackedSdr?: (sdr: KiwiSDR | null) => void }) {
+const WorldviewLeftPanel = React.memo(function WorldviewLeftPanel({ data, activeLayers, setActiveLayers, onSettingsClick, onLegendClick, gibsDate, setGibsDate, gibsOpacity, setGibsOpacity, onEntityClick, onFlyTo, trackedSdr, setTrackedSdr, pikudTimeOffset, setPikudTimeOffset, pikudDbRange }: { data: DashboardData; activeLayers: ActiveLayers; setActiveLayers: React.Dispatch<React.SetStateAction<ActiveLayers>>; onSettingsClick?: () => void; onLegendClick?: () => void; gibsDate?: string; setGibsDate?: (d: string) => void; gibsOpacity?: number; setGibsOpacity?: (o: number) => void; onEntityClick?: (entity: SelectedEntity) => void; onFlyTo?: (lat: number, lng: number) => void; trackedSdr?: KiwiSDR | null; setTrackedSdr?: (sdr: KiwiSDR | null) => void; pikudTimeOffset?: number | null; setPikudTimeOffset?: (v: number | null) => void; pikudDbRange?: { earliest: number | null; latest: number | null } }) {
     const [isMinimized, setIsMinimized] = useState(false);
     const { theme, toggleTheme, hudColor, cycleHudColor } = useTheme();
     const [gibsPlaying, setGibsPlaying] = useState(false);
@@ -148,6 +149,7 @@ const WorldviewLeftPanel = React.memo(function WorldviewLeftPanel({ data, active
         { id: "internet_outages", name: "Internet Outages", source: "IODA / Georgia Tech", count: data?.internet_outages?.length || 0, icon: Wifi },
         { id: "datacenters", name: "Data Centers", source: "DC Map (GitHub)", count: data?.datacenters?.length || 0, icon: Server },
         { id: "military_bases", name: "Military Bases", source: "OSINT (Static)", count: data?.military_bases?.length || 0, icon: Shield },
+        { id: "pikud_alerts", name: "Israel Red Alerts", source: "Pikud HaOref", count: data?.pikud_alerts?.length || 0, icon: AlertTriangle },
         { id: "day_night", name: "Day / Night Cycle", source: "Solar Calc", count: null, icon: Sun },
     ];
 
@@ -390,6 +392,43 @@ const WorldviewLeftPanel = React.memo(function WorldviewLeftPanel({ data, active
                                                 </div>
                                             </div>
                                             {/* GIBS Imagery inline controls: time slider + play/pause + opacity */}
+                                            {active && layer.id === 'pikud_alerts' && setPikudTimeOffset && (
+                                                <div className="ml-7 mt-2 flex flex-col gap-1" onClick={e => e.stopPropagation()}>
+                                                    <div className="flex items-center gap-2">
+                                                        <input
+                                                            type="range"
+                                                            min={-(60 * 24 * 30)}
+                                                            max={0}
+                                                            step={5}
+                                                            value={pikudTimeOffset ?? 0}
+                                                            onChange={e => {
+                                                                const v = parseInt(e.target.value);
+                                                                setPikudTimeOffset(v === 0 ? null : v);
+                                                            }}
+                                                            className="flex-1 h-1 accent-red-500 cursor-pointer"
+                                                        />
+                                                    </div>
+                                                    <div className="flex items-center justify-between">
+                                                        <span className="text-[8px] text-red-400 font-mono">
+                                                            {pikudTimeOffset === null || pikudTimeOffset === 0
+                                                                ? "LIVE"
+                                                                : (() => {
+                                                                    const mins = Math.abs(pikudTimeOffset);
+                                                                    if (mins < 60) return `${mins}m ago`;
+                                                                    const h = Math.floor(mins / 60);
+                                                                    const m = mins % 60;
+                                                                    return m ? `${h}h ${m}m ago` : `${h}h ago`;
+                                                                })()}
+                                                        </span>
+                                                        {pikudTimeOffset !== null && pikudTimeOffset !== 0 && (
+                                                            <button
+                                                                onClick={() => setPikudTimeOffset(null)}
+                                                                className="text-[8px] text-red-400 hover:text-red-300 font-mono underline"
+                                                            >LIVE</button>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            )}
                                             {active && layer.id === 'gibs_imagery' && gibsDate && setGibsDate && setGibsOpacity && (
                                                 <div className="ml-7 mt-2 flex flex-col gap-2" onClick={e => e.stopPropagation()}>
                                                     <div className="flex items-center gap-2">
