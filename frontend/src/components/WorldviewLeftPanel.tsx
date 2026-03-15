@@ -63,12 +63,14 @@ const POTUS_ICAOS: Record<string, { label: string; type: string }> = {
 };
 import type { DashboardData, ActiveLayers, SelectedEntity, KiwiSDR } from "@/types/dashboard";
 
-const WorldviewLeftPanel = React.memo(function WorldviewLeftPanel({ data, activeLayers, setActiveLayers, onSettingsClick, onLegendClick, gibsDate, setGibsDate, gibsOpacity, setGibsOpacity, onEntityClick, onFlyTo, trackedSdr, setTrackedSdr, pikudTimeOffset, setPikudTimeOffset, pikudDbRange }: { data: DashboardData; activeLayers: ActiveLayers; setActiveLayers: React.Dispatch<React.SetStateAction<ActiveLayers>>; onSettingsClick?: () => void; onLegendClick?: () => void; gibsDate?: string; setGibsDate?: (d: string) => void; gibsOpacity?: number; setGibsOpacity?: (o: number) => void; onEntityClick?: (entity: SelectedEntity) => void; onFlyTo?: (lat: number, lng: number) => void; trackedSdr?: KiwiSDR | null; setTrackedSdr?: (sdr: KiwiSDR | null) => void; pikudTimeOffset?: number | null; setPikudTimeOffset?: (v: number | null) => void; pikudDbRange?: { earliest: number | null; latest: number | null } }) {
+const WorldviewLeftPanel = React.memo(function WorldviewLeftPanel({ data, activeLayers, setActiveLayers, onSettingsClick, onLegendClick, gibsDate, setGibsDate, gibsOpacity, setGibsOpacity, onEntityClick, onFlyTo, trackedSdr, setTrackedSdr, pikudTimeOffset, setPikudTimeOffset, pikudDbRange }: { data: DashboardData; activeLayers: ActiveLayers; setActiveLayers: React.Dispatch<React.SetStateAction<ActiveLayers>>; onSettingsClick?: () => void; onLegendClick?: () => void; gibsDate?: string; setGibsDate?: (d: string) => void; gibsOpacity?: number; setGibsOpacity?: (o: number) => void; onEntityClick?: (entity: SelectedEntity) => void; onFlyTo?: (lat: number, lng: number) => void; trackedSdr?: KiwiSDR | null; setTrackedSdr?: (sdr: KiwiSDR | null) => void; pikudTimeOffset?: number | null; setPikudTimeOffset?: React.Dispatch<React.SetStateAction<number | null>>; pikudDbRange?: { earliest: number | null; latest: number | null } }) {
     const [isMinimized, setIsMinimized] = useState(false);
     const { theme, toggleTheme, hudColor, cycleHudColor } = useTheme();
     const [gibsPlaying, setGibsPlaying] = useState(false);
+    const [pikudPlaying, setPikudPlaying] = useState(false);
     const [potusEnabled, setPotusEnabled] = useState(true);
     const gibsIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const pikudIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     // GIBS time slider play/pause animation
     useEffect(() => {
@@ -93,6 +95,31 @@ const WorldviewLeftPanel = React.memo(function WorldviewLeftPanel({ data, active
         }, 1500);
         return () => { if (gibsIntervalRef.current) clearInterval(gibsIntervalRef.current); };
     }, [gibsPlaying, gibsDate, setGibsDate]);
+
+    // Pikud HaOref 24h playback — steps forward 10 minutes per tick, loops back to start
+    useEffect(() => {
+        if (!pikudPlaying || !setPikudTimeOffset) {
+            if (pikudIntervalRef.current) clearInterval(pikudIntervalRef.current);
+            pikudIntervalRef.current = null;
+            return;
+        }
+        // Start from 24h ago if currently live
+        if (pikudTimeOffset === null || pikudTimeOffset === 0) {
+            setPikudTimeOffset(-1440);
+        }
+        pikudIntervalRef.current = setInterval(() => {
+            setPikudTimeOffset((prev: number | null) => {
+                const current = prev ?? -1440;
+                const next = current + 10; // advance 10 minutes per tick
+                if (next >= 0) {
+                    setPikudPlaying(false);
+                    return null; // return to live
+                }
+                return next;
+            });
+        }, 800);
+        return () => { if (pikudIntervalRef.current) clearInterval(pikudIntervalRef.current); };
+    }, [pikudPlaying, setPikudTimeOffset]);
 
     // Compute ship category counts (memoized — ships array can be 1000+ items)
     const { militaryShipCount, cargoShipCount, passengerShipCount, civilianShipCount, trackedYachtCount } = useMemo(() => {
@@ -395,13 +422,20 @@ const WorldviewLeftPanel = React.memo(function WorldviewLeftPanel({ data, active
                                             {active && layer.id === 'pikud_alerts' && setPikudTimeOffset && (
                                                 <div className="ml-7 mt-2 flex flex-col gap-1" onClick={e => e.stopPropagation()}>
                                                     <div className="flex items-center gap-2">
+                                                        <button
+                                                            onClick={() => setPikudPlaying(p => !p)}
+                                                            className="w-5 h-5 flex items-center justify-center rounded border border-red-500/30 text-red-400 hover:bg-red-950/30 transition-colors flex-shrink-0"
+                                                        >
+                                                            {pikudPlaying ? <Pause size={10} /> : <Play size={10} />}
+                                                        </button>
                                                         <input
                                                             type="range"
-                                                            min={-(60 * 24 * 30)}
+                                                            min={-1440}
                                                             max={0}
                                                             step={5}
                                                             value={pikudTimeOffset ?? 0}
                                                             onChange={e => {
+                                                                setPikudPlaying(false);
                                                                 const v = parseInt(e.target.value);
                                                                 setPikudTimeOffset(v === 0 ? null : v);
                                                             }}
@@ -422,7 +456,7 @@ const WorldviewLeftPanel = React.memo(function WorldviewLeftPanel({ data, active
                                                         </span>
                                                         {pikudTimeOffset !== null && pikudTimeOffset !== 0 && (
                                                             <button
-                                                                onClick={() => setPikudTimeOffset(null)}
+                                                                onClick={() => { setPikudPlaying(false); setPikudTimeOffset(null); }}
                                                                 className="text-[8px] text-red-400 hover:text-red-300 font-mono underline"
                                                             >LIVE</button>
                                                         )}
