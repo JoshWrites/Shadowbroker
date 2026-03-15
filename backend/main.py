@@ -274,6 +274,7 @@ async def live_data_fast(request: Request,
         "gps_jamming": _f(d.get("gps_jamming", [])),
         "satellites": _f(d.get("satellites", [])),
         "satellite_source": d.get("satellite_source", "none"),
+        "pikud_alerts": _f(d.get("pikud_alerts", [])),  # Live ring buffer — updated every 5s
         "freshness": dict(source_timestamps),
     }
     bbox_tag = f"{s},{w},{n},{e}" if has_bbox else "full"
@@ -307,7 +308,6 @@ async def live_data_slow(request: Request,
         "firms_fires": _f(d.get("firms_fires", [])),
         "datacenters": _f(d.get("datacenters", [])),
         "military_bases": _f(d.get("military_bases", [])),
-        "pikud_alerts": _f(d.get("pikud_alerts", [])),
         "freshness": dict(source_timestamps),
     }
     bbox_tag = f"{s},{w},{n},{e}" if has_bbox else "full"

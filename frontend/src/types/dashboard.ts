@@ -434,6 +434,8 @@ export interface DashboardData {
   firms_fires?: FireHotspot[];
   datacenters?: DataCenter[];
   military_bases?: MilitaryBase[];
+
+  // Fast tier (live ring buffer, updated every 5s on backend)
   pikud_alerts?: PikudAlert[];
 }
 
