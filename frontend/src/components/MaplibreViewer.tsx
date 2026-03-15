@@ -226,21 +226,42 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
         activeLayers.military_bases ? buildMilitaryBasesGeoJSON(data?.military_bases) : null,
         [activeLayers.military_bases, data?.military_bases]);
 
-    // Pikud HaOref: use history slice when scrubbing, otherwise use live data from slow poll
+    // Pikud HaOref: use history slice when scrubbing, otherwise use live data from fast poll.
+    // Age buckets are computed at memo-build time (re-evaluated every fast poll ~15s):
+    //   0–2 min  → "hot"    #ef4444 bright red
+    //   2–10 min → "recent" #f97316 orange
+    //   10–30 min→ "old"    #eab308 amber
+    //   >30 min  → dropped from live view (still in SQLite for scrubber)
     const pikudAlertsGeoJSON = useMemo(() => {
         if (!activeLayers.pikud_alerts) return null;
-        const alerts = (pikudTimeOffset !== null && pikudTimeOffset !== undefined && pikudTimeOffset !== 0)
-            ? (pikudHistoryData ?? [])
-            : (data?.pikud_alerts ?? []);
+        const isLive = pikudTimeOffset === null || pikudTimeOffset === undefined || pikudTimeOffset === 0;
+        const alerts = isLive ? (data?.pikud_alerts ?? []) : (pikudHistoryData ?? []);
         if (!alerts.length) return null;
-        return {
-            type: "FeatureCollection" as const,
-            features: alerts.map((a: any, i: number) => ({
+        const nowSec = Date.now() / 1000;
+        const features = alerts.flatMap((a: any, i: number) => {
+            const ageMins = isLive ? (nowSec - (a.ts ?? 0)) / 60 : null;
+            // Drop alerts older than 30 minutes in live mode
+            if (isLive && ageMins !== null && ageMins > 30) return [];
+            const ageClass = !isLive || ageMins === null ? "hot"
+                : ageMins < 2  ? "hot"
+                : ageMins < 10 ? "recent"
+                : "old";
+            return [{
                 type: "Feature" as const,
                 geometry: { type: "Point" as const, coordinates: [a.lng, a.lat] },
-                properties: { id: `pikud-${i}`, type: "pikud_alert", city: a.city, category: a.category, timestamp: a.timestamp, ts: a.ts },
-            })),
-        };
+                properties: {
+                    id: `pikud-${i}`,
+                    type: "pikud_alert",
+                    city: a.city,
+                    category: a.category,
+                    timestamp: a.timestamp,
+                    ts: a.ts,
+                    age_class: ageClass,
+                },
+            }];
+        });
+        if (!features.length) return null;
+        return { type: "FeatureCollection" as const, features };
     }, [activeLayers.pikud_alerts, data?.pikud_alerts, pikudTimeOffset, pikudHistoryData]);
 
     // Load Images into the Map Style once loaded
@@ -1520,16 +1541,22 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                     </Source>
                 )}
 
-                {/* Pikud HaOref — Israel red alerts */}
+                {/* Pikud HaOref — Israel red alerts, color-coded by age */}
+                {/* hot (<2min)=#ef4444, recent (2-10min)=#f97316, old (10-30min)=#eab308 */}
                 {pikudAlertsGeoJSON && (
                     <Source id="pikud-alerts" type="geojson" data={pikudAlertsGeoJSON as any}>
                         <Layer
                             id="pikud-alerts-pulse"
                             type="circle"
                             paint={{
-                                'circle-color': '#ef4444',
+                                'circle-color': ['match', ['get', 'age_class'],
+                                    'hot',    '#ef4444',
+                                    'recent', '#f97316',
+                                    'old',    '#eab308',
+                                    '#ef4444'],
                                 'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 8, 6, 14, 10, 20],
-                                'circle-opacity': 0.25,
+                                'circle-opacity': ['match', ['get', 'age_class'],
+                                    'hot', 0.30, 'recent', 0.20, 'old', 0.12, 0.30],
                                 'circle-stroke-width': 0,
                             }}
                         />
@@ -1537,11 +1564,20 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                             id="pikud-alerts-layer"
                             type="circle"
                             paint={{
-                                'circle-color': '#ef4444',
+                                'circle-color': ['match', ['get', 'age_class'],
+                                    'hot',    '#ef4444',
+                                    'recent', '#f97316',
+                                    'old',    '#eab308',
+                                    '#ef4444'],
                                 'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 4, 6, 7, 10, 10],
-                                'circle-opacity': 1,
+                                'circle-opacity': ['match', ['get', 'age_class'],
+                                    'hot', 1.0, 'recent', 0.85, 'old', 0.65, 1.0],
                                 'circle-stroke-width': 1.5,
-                                'circle-stroke-color': '#fca5a5',
+                                'circle-stroke-color': ['match', ['get', 'age_class'],
+                                    'hot',    '#fca5a5',
+                                    'recent', '#fdba74',
+                                    'old',    '#fde047',
+                                    '#fca5a5'],
                             }}
                         />
                         <Layer
@@ -1557,7 +1593,11 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                                 'text-allow-overlap': false,
                             }}
                             paint={{
-                                'text-color': '#fca5a5',
+                                'text-color': ['match', ['get', 'age_class'],
+                                    'hot',    '#fca5a5',
+                                    'recent', '#fdba74',
+                                    'old',    '#fde047',
+                                    '#fca5a5'],
                                 'text-halo-color': 'rgba(0,0,0,0.9)',
                                 'text-halo-width': 1,
                             }}
