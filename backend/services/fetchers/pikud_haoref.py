@@ -132,7 +132,9 @@ _db_lock = threading.Lock()
 
 
 def init_pikud_db():
-    """Create the alerts table if it doesn't exist. Safe to call multiple times."""
+    """Create the alerts table if it doesn't exist. Safe to call multiple times.
+    Also runs a migration to add the `ts` column to existing DBs if missing.
+    """
     try:
         _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         with _db_lock:
@@ -149,10 +151,24 @@ def init_pikud_db():
                     title       TEXT,
                     desc        TEXT,
                     color       TEXT,
-                    timestamp   TEXT NOT NULL
+                    timestamp   TEXT NOT NULL,
+                    ts          REAL
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON alerts (timestamp)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_ts ON alerts (ts)")
+            # Migration: add ts column to existing DBs that predate this field
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(alerts)").fetchall()]
+            if "ts" not in cols:
+                conn.execute("ALTER TABLE alerts ADD COLUMN ts REAL")
+                logger.info("Pikud HaOref: migrated DB — added ts column")
+            conn.commit()
+            # Backfill ts for any rows where it's NULL (from old schema)
+            conn.execute("""
+                UPDATE alerts SET ts = (
+                    strftime('%s', substr(timestamp, 1, 19))
+                ) WHERE ts IS NULL AND timestamp IS NOT NULL
+            """)
             conn.commit()
             conn.close()
         logger.info(f"Pikud HaOref: DB ready at {_DB_PATH}")
@@ -169,8 +185,8 @@ def _persist_alerts(features: list[dict]):
             conn = sqlite3.connect(_DB_PATH)
             conn.executemany(
                 """INSERT OR IGNORE INTO alerts
-                   (id, city, area, lat, lng, cat, cat_label, title, desc, color, timestamp)
-                   VALUES (:id, :city, :area, :lat, :lng, :cat, :cat_label, :title, :desc, :color, :timestamp)""",
+                   (id, city, area, lat, lng, cat, cat_label, title, desc, color, timestamp, ts)
+                   VALUES (:id, :city, :area, :lat, :lng, :cat, :cat_label, :title, :desc, :color, :timestamp, :ts)""",
                 features,
             )
             conn.commit()
@@ -179,14 +195,14 @@ def _persist_alerts(features: list[dict]):
         logger.error(f"Pikud HaOref: DB persist error: {e}")
 
 
-def query_alerts(from_ts: str, until_ts: str) -> list[dict]:
-    """Return all alerts with timestamp between from_ts and until_ts (ISO strings)."""
+def query_alerts(from_ts: float, until_ts: float) -> list[dict]:
+    """Return all alerts with ts between from_ts and until_ts (Unix epoch floats)."""
     try:
         with _db_lock:
             conn = sqlite3.connect(_DB_PATH)
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
-                "SELECT * FROM alerts WHERE timestamp >= ? AND timestamp <= ? ORDER BY timestamp DESC",
+                "SELECT * FROM alerts WHERE ts >= ? AND ts <= ? ORDER BY ts DESC",
                 (from_ts, until_ts),
             ).fetchall()
             conn.close()
@@ -197,17 +213,17 @@ def query_alerts(from_ts: str, until_ts: str) -> list[dict]:
 
 
 def get_db_time_range() -> dict:
-    """Return the earliest and latest alert timestamps in the DB."""
+    """Return the earliest and latest Unix timestamps in the DB."""
     try:
         with _db_lock:
             conn = sqlite3.connect(_DB_PATH)
-            row = conn.execute("SELECT MIN(timestamp), MAX(timestamp), COUNT(*) FROM alerts").fetchone()
+            row = conn.execute("SELECT MIN(ts), MAX(ts), COUNT(*) FROM alerts WHERE ts IS NOT NULL").fetchone()
             conn.close()
         if row and row[2]:
-            return {"oldest": row[0], "newest": row[1], "count": row[2]}
+            return {"earliest": row[0], "latest": row[1], "count": row[2]}
     except Exception as e:
         logger.error(f"Pikud HaOref: DB range error: {e}")
-    return {"oldest": None, "newest": None, "count": 0}
+    return {"earliest": None, "latest": None, "count": 0}
 
 
 # ---------------------------------------------------------------------------
@@ -254,7 +270,9 @@ def _parse_live_alert(resp) -> list[dict]:
     desc = data.get("desc", "")
     color = ALERT_COLORS.get(cat, "#ff2222")
     cat_label = ALERT_CATEGORIES.get(cat, f"Category {cat}")
-    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    now = datetime.now(timezone.utc)
+    now_iso = now.strftime("%Y-%m-%d %H:%M:%S")
+    now_ts = now.timestamp()
 
     features = []
     for city in cities:
@@ -272,6 +290,7 @@ def _parse_live_alert(resp) -> list[dict]:
             "color": color,
             "active": True,
             "timestamp": now_iso,
+            "ts": now_ts,
         })
     return features
 
@@ -342,6 +361,11 @@ def fetch_pikud_history():
             color = ALERT_COLORS.get(cat, "#ff2222")
             cat_label = ALERT_CATEGORIES.get(cat, f"Category {cat}")
             fid = f"hist-{alert_date}-{city}"
+            # Parse alertDate to Unix epoch — format is "YYYY-MM-DD HH:MM:SS"
+            try:
+                alert_ts = datetime.strptime(alert_date[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc).timestamp()
+            except (ValueError, TypeError):
+                alert_ts = None
             to_persist.append({
                 "id": fid,
                 "lat": geo["lat"],
@@ -355,6 +379,7 @@ def fetch_pikud_history():
                 "color": color,
                 "active": False,
                 "timestamp": alert_date,
+                "ts": alert_ts,
             })
 
         if to_persist:
