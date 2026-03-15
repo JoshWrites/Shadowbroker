@@ -226,24 +226,31 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
         activeLayers.military_bases ? buildMilitaryBasesGeoJSON(data?.military_bases) : null,
         [activeLayers.military_bases, data?.military_bases]);
 
-    // Pikud HaOref: use history slice when scrubbing, otherwise use live data from fast poll.
-    // Age buckets match Israeli shelter doctrine (stay sheltered 10 min after alert):
+    // Pikud HaOref: age buckets match Israeli shelter doctrine (10 min shelter window).
+    // In live mode: age is relative to now.
+    // In scrub mode: age is relative to the scrub position, so alerts at the leading
+    //   edge of the window show red, older ones in the same slice fade to orange/amber.
+    //   >30 min before scrub position are dropped (same rule as live).
     //   0–10 min → "hot"    #ef4444 red    — shelter-in-place window
     //   10–20 min→ "recent" #f97316 orange — recently cleared
     //   20–30 min→ "old"    #eab308 amber  — fading
-    //   >30 min  → dropped from live view (still in SQLite for scrubber)
+    //   >30 min  → dropped
     const pikudAlertsGeoJSON = useMemo(() => {
         if (!activeLayers.pikud_alerts) return null;
         const isLive = pikudTimeOffset === null || pikudTimeOffset === undefined || pikudTimeOffset === 0;
         const alerts = isLive ? (data?.pikud_alerts ?? []) : (pikudHistoryData ?? []);
         if (!alerts.length) return null;
-        const nowSec = Date.now() / 1000;
+        // Reference point: now for live, scrub position for history
+        const refSec = isLive
+            ? Date.now() / 1000
+            : Date.now() / 1000 + (pikudTimeOffset ?? 0) * 60;
         const features = alerts.flatMap((a: any, i: number) => {
-            const ageMins = isLive ? (nowSec - (a.ts ?? 0)) / 60 : null;
-            // Drop alerts older than 30 minutes in live mode
-            if (isLive && ageMins !== null && ageMins > 30) return [];
-            const ageClass = !isLive || ageMins === null ? "hot"
-                : ageMins < 10 ? "hot"
+            const ageMins = (refSec - (a.ts ?? 0)) / 60;
+            // Drop alerts more than 30 minutes before the reference point
+            if (ageMins > 30) return [];
+            // Alerts after the reference point (shouldn't happen, but guard it)
+            if (ageMins < 0) return [];
+            const ageClass = ageMins < 10 ? "hot"
                 : ageMins < 20 ? "recent"
                 : "old";
             return [{
