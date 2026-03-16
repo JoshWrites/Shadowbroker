@@ -2,9 +2,10 @@
 
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Plane, AlertTriangle, Activity, Satellite, Cctv, ChevronDown, ChevronUp, Ship, Eye, Anchor, Settings, Sun, Moon, BookOpen, Radio, Play, Pause, Globe, Flame, Wifi, Server, Shield, ToggleLeft, ToggleRight, Palette } from "lucide-react";
+import { Plane, AlertTriangle, Activity, Satellite, Cctv, ChevronDown, ChevronUp, Ship, Eye, Anchor, Settings, Sun, Moon, BookOpen, Radio, Play, Pause, Globe, Flame, Wifi, Server, Shield, ToggleLeft, ToggleRight, Palette, Search } from "lucide-react";
 import packageJson from "../../package.json";
 import { useTheme } from "@/lib/ThemeContext";
+import PikudDrilldownModal from "@/components/PikudDrilldownModal";
 
 function relativeTime(iso: string | undefined): string {
     if (!iso) return "";
@@ -68,6 +69,7 @@ const WorldviewLeftPanel = React.memo(function WorldviewLeftPanel({ data, active
     const { theme, toggleTheme, hudColor, cycleHudColor } = useTheme();
     const [gibsPlaying, setGibsPlaying] = useState(false);
     const [pikudPlaying, setPikudPlaying] = useState(false);
+    const [pikudDrilldownOpen, setPikudDrilldownOpen] = useState(false);
     const [potusEnabled, setPotusEnabled] = useState(true);
     const gibsIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const pikudIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -454,14 +456,31 @@ const WorldviewLeftPanel = React.memo(function WorldviewLeftPanel({ data, active
                                                                     return m ? `${h}h ${m}m ago` : `${h}h ago`;
                                                                 })()}
                                                         </span>
-                                                        {pikudTimeOffset !== null && pikudTimeOffset !== 0 && (
+                                                        <div className="flex items-center gap-2">
+                                                            {pikudTimeOffset !== null && pikudTimeOffset !== 0 && (
+                                                                <button
+                                                                    onClick={() => { setPikudPlaying(false); setPikudTimeOffset(null); }}
+                                                                    className="text-[8px] text-red-400 hover:text-red-300 font-mono underline"
+                                                                >LIVE</button>
+                                                            )}
                                                             <button
-                                                                onClick={() => { setPikudPlaying(false); setPikudTimeOffset(null); }}
-                                                                className="text-[8px] text-red-400 hover:text-red-300 font-mono underline"
-                                                            >LIVE</button>
-                                                        )}
+                                                                onClick={() => setPikudDrilldownOpen(true)}
+                                                                title="Archive drill-down"
+                                                                className="flex items-center gap-1 text-[8px] font-mono text-red-400/70 hover:text-red-400 transition-colors"
+                                                            >
+                                                                <Search size={9} /> ARCHIVE
+                                                            </button>
+                                                        </div>
                                                     </div>
                                                 </div>
+                                            )}
+                                            {pikudDrilldownOpen && setPikudTimeOffset && pikudDbRange && (
+                                                <PikudDrilldownModal
+                                                    onClose={() => setPikudDrilldownOpen(false)}
+                                                    pikudDbRange={pikudDbRange}
+                                                    setPikudTimeOffset={setPikudTimeOffset}
+                                                    pikudTimeOffset={pikudTimeOffset ?? null}
+                                                />
                                             )}
                                             {active && layer.id === 'gibs_imagery' && gibsDate && setGibsDate && setGibsOpacity && (
                                                 <div className="ml-7 mt-2 flex flex-col gap-2" onClick={e => e.stopPropagation()}>
