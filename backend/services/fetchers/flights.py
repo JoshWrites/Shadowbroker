@@ -9,7 +9,7 @@ import logging
 import threading
 import concurrent.futures
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 from cachetools import TTLCache
 from services.network_utils import fetch_with_curl
 from services.fetchers._store import latest_data, _data_lock, _mark_fresh
@@ -458,7 +458,7 @@ def _classify_and_publish(all_adsb_flights):
         f['trail'] = trail_data['points']
         return 1, hex_id
 
-    now_ts = datetime.utcnow().timestamp()
+    now_ts = datetime.now(timezone.utc).timestamp()
     all_lists = [commercial, private_jets, private_ga, existing_tracked]
     seen_hexes = set()
     trail_count = 0
@@ -577,7 +577,7 @@ def _classify_and_publish(all_adsb_flights):
         logger.error(f"Holding pattern detection error: {e}")
 
     with _data_lock:
-        latest_data['last_updated'] = datetime.utcnow().isoformat()
+        latest_data['last_updated'] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
 
 def _fetch_adsb_lol_regions():

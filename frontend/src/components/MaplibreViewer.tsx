@@ -312,11 +312,19 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
         const pendingImages: Record<string, string> = {};
 
         const loadImg = (id: string, url: string) => {
-            if (!map.hasImage(id)) {
+            if (map.hasImage(id)) return;
+            // data: URLs are synchronously decodable — use decode() to guarantee
+            // the image is ready before MapLibre's layer tries to render it.
+            const img = new Image();
+            img.crossOrigin = "anonymous";
+            img.src = url;
+            if (url.startsWith('data:')) {
+                // Inline SVG/data URLs: decode synchronously then add immediately
+                img.decode().then(() => {
+                    if (!map.hasImage(id)) map.addImage(id, img);
+                }).catch(() => {});
+            } else {
                 pendingImages[id] = url;
-                const img = new Image();
-                img.crossOrigin = "anonymous";
-                img.src = url;
                 img.onload = () => {
                     if (!map.hasImage(id)) map.addImage(id, img);
                     delete pendingImages[id];
@@ -324,7 +332,7 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
             }
         };
 
-        // Suppress "image not found" warnings — retry when the async load finishes
+        // Retry handler for external-URL images still loading when a layer fires
         map.on('styleimagemissing', (ev: any) => {
             const id = ev.id;
             const url = pendingImages[id];

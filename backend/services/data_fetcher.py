@@ -15,7 +15,7 @@ Heavy logic has been extracted into services/fetchers/:
 """
 import logging
 import concurrent.futures
-from datetime import datetime
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -67,7 +67,7 @@ def update_fast_data():
         futures = [executor.submit(func) for func in fast_funcs]
         concurrent.futures.wait(futures)
     with _data_lock:
-        latest_data['last_updated'] = datetime.utcnow().isoformat()
+        latest_data['last_updated'] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
     logger.info("Fast-tier update complete.")
 
 def update_slow_data():

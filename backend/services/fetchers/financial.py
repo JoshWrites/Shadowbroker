@@ -3,6 +3,7 @@
 Uses yfinance for ticker data with concurrent execution for performance.
 """
 import logging
+import math
 import concurrent.futures
 import yfinance as yf
 from services.fetchers._store import latest_data, _data_lock, _mark_fresh
@@ -17,12 +18,14 @@ def _fetch_single_ticker(symbol: str, period: str = "2d"):
         ticker = yf.Ticker(symbol)
         hist = ticker.history(period=period)
         if len(hist) >= 1:
-            current_price = hist['Close'].iloc[-1]
-            prev_close = hist['Close'].iloc[0] if len(hist) > 1 else current_price
+            current_price = float(hist['Close'].iloc[-1])
+            prev_close = float(hist['Close'].iloc[0]) if len(hist) > 1 else current_price
+            if math.isnan(current_price) or math.isnan(prev_close):
+                return symbol, None
             change_percent = ((current_price - prev_close) / prev_close) * 100 if prev_close else 0
             return symbol, {
-                "price": round(float(current_price), 2),
-                "change_percent": round(float(change_percent), 2),
+                "price": round(current_price, 2),
+                "change_percent": round(change_percent, 2),
                 "up": bool(change_percent >= 0)
             }
     except Exception as e:

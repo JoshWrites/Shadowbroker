@@ -13,7 +13,7 @@ import re
 import logging
 import requests
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sgp4.api import Satrec, WGS72, jday
 from services.network_utils import fetch_with_curl
 from services.fetchers._store import latest_data, _data_lock, _mark_fresh
@@ -304,7 +304,7 @@ def fetch_satellites():
 
         all_sats = classified
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         jd, fr = jday(now.year, now.month, now.day, now.hour, now.minute, now.second + now.microsecond / 1e6)
 
         for s in all_sats:

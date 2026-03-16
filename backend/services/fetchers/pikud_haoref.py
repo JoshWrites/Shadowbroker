@@ -166,11 +166,25 @@ def init_pikud_db():
                 logger.info("Pikud HaOref: migrated DB — added ts column")
                 conn.commit()
             conn.execute("CREATE INDEX IF NOT EXISTS idx_ts ON alerts (ts)")
-            # Backfill ts for any rows where it's NULL (from old schema)
-            conn.execute("""
-                UPDATE alerts SET ts = CAST(strftime('%s', substr(timestamp, 1, 19)) AS REAL)
-                WHERE ts IS NULL AND timestamp IS NOT NULL
-            """)
+            # Backfill ts for any rows where it's NULL (from old schema).
+            # Parse in Python with explicit Israel timezone — SQLite's strftime('%s', ...)
+            # is system-TZ dependent and would produce wrong values in a UTC container.
+            null_rows = conn.execute(
+                "SELECT id, timestamp FROM alerts WHERE ts IS NULL AND timestamp IS NOT NULL"
+            ).fetchall()
+            if null_rows:
+                from zoneinfo import ZoneInfo
+                _IL_TZ = ZoneInfo("Asia/Jerusalem")
+                updates = []
+                for row_id, ts_str in null_rows:
+                    try:
+                        ts = datetime.strptime(ts_str[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=_IL_TZ).timestamp()
+                    except Exception:
+                        ts = None
+                    if ts is not None:
+                        updates.append((ts, row_id))
+                if updates:
+                    conn.executemany("UPDATE alerts SET ts = ? WHERE id = ?", updates)
             conn.commit()
             conn.close()
         logger.info(f"Pikud HaOref: DB ready at {_DB_PATH}")
@@ -467,10 +481,13 @@ def fetch_pikud_history():
             color = ALERT_COLORS.get(cat, "#ff2222")
             cat_label = ALERT_CATEGORIES.get(cat, f"Category {cat}")
             fid = f"hist-{alert_date}-{city}"
-            # Parse alertDate to Unix epoch — format is "YYYY-MM-DD HH:MM:SS"
+            # Parse alertDate to Unix epoch — format is "YYYY-MM-DD HH:MM:SS" in Israel local time.
+            # Use zoneinfo (Python 3.9+ stdlib) for correct DST handling (UTC+2 IST / UTC+3 IDT).
             try:
-                alert_ts = datetime.strptime(alert_date[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc).timestamp()
-            except (ValueError, TypeError):
+                from zoneinfo import ZoneInfo
+                _IL_TZ = ZoneInfo("Asia/Jerusalem")
+                alert_ts = datetime.strptime(alert_date[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=_IL_TZ).timestamp()
+            except Exception:
                 alert_ts = None
             to_persist.append({
                 "id": fid,
@@ -490,17 +507,7 @@ def fetch_pikud_history():
 
         if to_persist:
             _persist_alerts(to_persist)
-            _add_to_ring(to_persist)
             logger.info(f"Pikud HaOref: persisted {len(to_persist)} historical alerts")
-
-        # Refresh live store from ring buffer
-        with _ring_lock:
-            ring_list = [dict(f, active=False) for f in _alert_ring]
-        combined = [f for f in ring_list if f.get("lat") is not None]
-        with _data_lock:
-            latest_data["pikud_alerts"] = combined
-        if combined:
-            _mark_fresh("pikud_alerts")
 
     except Exception as e:
         logger.error(f"Pikud HaOref history fetch error: {e}")
