@@ -12,6 +12,8 @@ services:
       - LTA_ACCOUNT_KEY=${LTA_ACCOUNT_KEY}
       # Override allowed CORS origins (comma-separated). Auto-detects LAN IPs if empty.
       - CORS_ORIGINS=${CORS_ORIGINS:-}
+      # Optional: Signal Archive listener for gap backfill on startup. Leave unset to disable.
+      - LISTENER_URL=${LISTENER_URL:-}
     volumes:
       - backend_data:/app/data
     restart: unless-stopped

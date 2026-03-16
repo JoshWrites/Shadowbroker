@@ -68,10 +68,22 @@ export function useDataPolling() {
       scheduleNext('slow');
     };
 
-    // Adaptive polling: retry every 3s during startup, back off to normal cadence once data arrives
+    // Adaptive polling: retry every 3s during startup, then sync to backend pikud fetch cadence.
+    // Steady state: next fetch fires at (last pikud poll + 5s backend interval + 1.5s offset).
+    // Falls back to 6.5s if freshness timestamp is missing or in the future.
     const scheduleNext = (tier: 'fast' | 'slow') => {
       if (tier === 'fast') {
-        const delay = hasData ? 15000 : 3000; // 3s startup retry → 15s steady state
+        let delay = 3000;
+        if (hasData) {
+          const pikudFresh = dataRef.current?.freshness?.pikud_alerts;
+          if (pikudFresh) {
+            const lastPoll = new Date(pikudFresh + 'Z').getTime();
+            const nextFetch = lastPoll + 5000 + 1500; // next backend poll + 1.5s offset
+            delay = Math.max(500, nextFetch - Date.now()); // never fire in less than 500ms
+          } else {
+            delay = 6500; // fallback: 5s + 1.5s
+          }
+        }
         fastTimerId = setTimeout(fetchFastData, delay);
       } else {
         const delay = hasData ? 120000 : 5000; // 5s startup retry → 120s steady state

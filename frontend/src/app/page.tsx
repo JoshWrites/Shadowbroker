@@ -198,10 +198,7 @@ export default function Dashboard() {
     const until = refSec;       // up to scrub position
     fetch(`${BACKEND_DIRECT}/api/pikud-alerts/history?from_ts=${from}&until_ts=${until}`, { signal: controller.signal })
       .then(r => r.json())
-      .then(d => {
-        console.log('[pikud scrub] offset=', pikudTimeOffset, 'alerts=', d.alerts?.length, 'sample=', d.alerts?.[0]);
-        setPikudHistoryData(d.alerts ?? []);
-      })
+      .then(d => { setPikudHistoryData(d.alerts ?? []); })
       .catch(e => { if (e.name !== 'AbortError') console.error('[pikud scrub] fetch error:', e); });
     return () => controller.abort();
   }, [pikudTimeOffset]);

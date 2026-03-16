@@ -267,7 +267,6 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                 },
             }];
         });
-        console.log('[pikud memo] isLive=', isLive, 'alerts=', alerts.length, 'features=', features.length);
         if (!features.length) return null;
         return { type: "FeatureCollection" as const, features };
     }, [activeLayers.pikud_alerts, data?.pikud_alerts, pikudTimeOffset, pikudHistoryData]);

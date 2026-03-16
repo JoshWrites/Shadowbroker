@@ -15,6 +15,7 @@ When active, returns: {"id": "...", "cat": "1", "title": "...", "desc": "...", "
 """
 import json
 import logging
+import os
 import sqlite3
 import threading
 from collections import deque
@@ -328,8 +329,112 @@ def fetch_pikud_haoref():
     with _data_lock:
         latest_data["pikud_alerts"] = combined
 
-    if combined or active_features:
-        _mark_fresh("pikud_alerts")
+    # Always mark fresh so the UI timestamp reflects the actual poll time,
+    # even during quiet periods with no active alerts
+    _mark_fresh("pikud_alerts")
+
+
+def backfill_from_listener():
+    """Fetch any alerts the listener has that we're missing in our local DB.
+
+    Reads LISTENER_URL from the environment (e.g. http://10.100.102.106:7654).
+    If unset or empty, skips silently — the listener is optional.
+    All errors are caught and logged; this function never raises.
+
+    Fetches from the listener's own earliest record up to now, with no time
+    limit — so a month-long gap is handled just as well as a day-long one.
+    Paginates in 7-day chunks to keep individual HTTP calls manageable.
+    """
+    import time as _time
+    import urllib.request
+
+    listener_url = os.environ.get("LISTENER_URL", "").rstrip("/")
+    if not listener_url:
+        return
+
+    try:
+        # Ask the listener what it has
+        range_req = urllib.request.Request(
+            f"{listener_url}/range/pikud_alerts",
+            headers={"Accept": "application/json"},
+        )
+        with urllib.request.urlopen(range_req, timeout=10) as resp:
+            if resp.status != 200:
+                logger.warning(f"Pikud backfill: range check returned HTTP {resp.status}")
+                return
+            listener_range = json.loads(resp.read().decode())
+
+        listener_earliest = listener_range.get("earliest")
+        if not listener_earliest:
+            logger.info("Pikud backfill: listener has no data yet")
+            return
+
+        # Start from our newest local record; if DB is empty, go all the way back
+        local_range = get_db_time_range()
+        from_ts = local_range["latest"] if local_range["latest"] else listener_earliest
+        until_ts = _time.time()
+
+        if from_ts >= until_ts:
+            logger.info("Pikud backfill: already up to date")
+            return
+
+        # Paginate in 7-day windows so each HTTP call stays small
+        _CHUNK = 7 * 24 * 3600
+        total_inserted = 0
+        chunk_start = from_ts
+
+        while chunk_start < until_ts:
+            chunk_end = min(chunk_start + _CHUNK, until_ts)
+            url = f"{listener_url}/backfill/pikud_alerts?from_ts={chunk_start}&until_ts={chunk_end}"
+            req = urllib.request.Request(url, headers={"Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                if resp.status != 200:
+                    logger.warning(f"Pikud backfill: chunk {chunk_start}–{chunk_end} returned HTTP {resp.status}")
+                    break
+                payload = json.loads(resp.read().decode())
+
+            records = payload.get("records", payload) if isinstance(payload, dict) else payload
+            if records:
+                to_persist = []
+                for r in records:
+                    city = r.get("city", "")
+                    alert_date = r.get("timestamp", "")
+                    cat = str(r.get("cat") or "1")
+                    if not city or not alert_date:
+                        continue
+                    geo = _resolve_city(city)
+                    fid = r.get("id") or f"backfill-{alert_date}-{city}"
+                    try:
+                        alert_ts = r.get("ts") or datetime.strptime(alert_date[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc).timestamp()
+                    except (ValueError, TypeError):
+                        alert_ts = None
+                    to_persist.append({
+                        "id": fid,
+                        "city": city,
+                        "area": r.get("area") or (geo.get("area", "") if geo else ""),
+                        "lat": r.get("lat") or (geo["lat"] if geo else None),
+                        "lng": r.get("lng") or (geo["lng"] if geo else None),
+                        "cat": cat,
+                        "cat_label": r.get("cat_label") or ALERT_CATEGORIES.get(cat, f"Category {cat}"),
+                        "title": r.get("title", ""),
+                        "desc": r.get("desc", ""),
+                        "color": r.get("color") or ALERT_COLORS.get(cat, "#ff2222"),
+                        "timestamp": alert_date,
+                        "ts": alert_ts,
+                    })
+                if to_persist:
+                    _persist_alerts(to_persist)
+                    total_inserted += len(to_persist)
+
+            chunk_start = chunk_end
+
+        if total_inserted:
+            logger.info(f"Pikud backfill: inserted {total_inserted} records from listener")
+        else:
+            logger.info("Pikud backfill: no new records from listener")
+
+    except Exception as e:
+        logger.warning(f"Pikud backfill: skipped — {e}")
 
 
 def fetch_pikud_history():

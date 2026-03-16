@@ -42,9 +42,6 @@ def backfill(
     """Return all archived events for a signal within [from_ts, until_ts]."""
     if until_ts < from_ts:
         raise HTTPException(status_code=400, detail="until_ts must be >= from_ts")
-    if until_ts - from_ts > 7 * 24 * 3600:
-        raise HTTPException(status_code=400, detail="Range too large (max 7 days)")
-
     records = query_events(signal, from_ts, until_ts)
     return {"signal": signal, "count": len(records), "records": records}
 

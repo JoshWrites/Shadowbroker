@@ -46,7 +46,7 @@ from services.fetchers.geo import (  # noqa: F401
     fetch_ships, fetch_airports, find_nearest_airport, cached_airports,
     fetch_frontlines, fetch_gdelt, fetch_geopolitics, update_liveuamap,
 )
-from services.fetchers.pikud_haoref import fetch_pikud_haoref, fetch_pikud_history, init_pikud_db  # noqa: F401
+from services.fetchers.pikud_haoref import fetch_pikud_haoref, fetch_pikud_history, init_pikud_db, backfill_from_listener  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +110,7 @@ def start_scheduler():
     global _scheduler
     init_db()
     init_pikud_db()
+    backfill_from_listener()  # no-op if LISTENER_URL is unset or listener is unreachable
     _scheduler = BackgroundScheduler(daemon=True)
 
     # Pikud HaOref — poll live alerts every 5 seconds (rocket alerts are time-critical)
