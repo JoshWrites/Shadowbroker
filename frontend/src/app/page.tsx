@@ -23,6 +23,7 @@ import type { SelectedEntity, PikudAlert } from "@/types/dashboard";
 import { API_BASE, BACKEND_DIRECT } from "@/lib/api";
 import { NOMINATIM_DEBOUNCE_MS } from "@/lib/constants";
 import { useDataPolling } from "@/hooks/useDataPolling";
+import type { UkraineAlert } from "@/types/dashboard";
 import { useReverseGeocode } from "@/hooks/useReverseGeocode";
 import { useRegionDossier } from "@/hooks/useRegionDossier";
 
@@ -165,6 +166,7 @@ export default function Dashboard() {
     datacenters: false,
     military_bases: false,
     pikud_alerts: true,
+    ukraine_alerts: true,
   });
 
   // NASA GIBS satellite imagery state
@@ -192,16 +194,40 @@ export default function Dashboard() {
   useEffect(() => {
     if (pikudTimeOffset === null) { setPikudHistoryData([]); return; }
     const controller = new AbortController();
-    // refSec is the scrub position — show the 30-minute window ending at refSec
     const refSec = Date.now() / 1000 + pikudTimeOffset * 60;
-    const from = refSec - 1800; // 30 min before scrub position
-    const until = refSec;       // up to scrub position
+    const from = refSec - 1800;
+    const until = refSec;
     fetch(`${BACKEND_DIRECT}/api/pikud-alerts/history?from_ts=${from}&until_ts=${until}`, { signal: controller.signal })
       .then(r => r.json())
       .then(d => { setPikudHistoryData(d.alerts ?? []); })
       .catch(e => { if (e.name !== 'AbortError') console.error('[pikud scrub] fetch error:', e); });
     return () => controller.abort();
   }, [pikudTimeOffset]);
+
+  // Ukraine time scrubber
+  const [ukraineTimeOffset, setUkraineTimeOffset] = useState<number | null>(null);
+  const [ukraineHistoryData, setUkraineHistoryData] = useState<UkraineAlert[]>([]);
+  const [ukraineDbRange, setUkraineDbRange] = useState<{ earliest: number | null; latest: number | null }>({ earliest: null, latest: null });
+
+  useEffect(() => {
+    fetch(`${BACKEND_DIRECT}/api/ukraine-alerts/range`)
+      .then(r => r.json())
+      .then(d => setUkraineDbRange({ earliest: d.earliest ?? null, latest: d.latest ?? null }))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (ukraineTimeOffset === null) { setUkraineHistoryData([]); return; }
+    const controller = new AbortController();
+    const refSec = Date.now() / 1000 + ukraineTimeOffset * 60;
+    const from = refSec - 1800;
+    const until = refSec;
+    fetch(`${BACKEND_DIRECT}/api/ukraine-alerts/history?from_ts=${from}&until_ts=${until}`, { signal: controller.signal })
+      .then(r => r.json())
+      .then(d => { setUkraineHistoryData(d.alerts ?? []); })
+      .catch(e => { if (e.name !== 'AbortError') console.error('[ukraine scrub] fetch error:', e); });
+    return () => controller.abort();
+  }, [ukraineTimeOffset]);
 
   const [effects, setEffects] = useState({
     bloom: true,
@@ -265,6 +291,8 @@ export default function Dashboard() {
           setTrackedSdr={setTrackedSdr}
           pikudTimeOffset={pikudTimeOffset}
           pikudHistoryData={pikudHistoryData}
+          ukraineTimeOffset={ukraineTimeOffset}
+          ukraineHistoryData={ukraineHistoryData}
         />
       </ErrorBoundary>
 
@@ -312,7 +340,7 @@ export default function Dashboard() {
           >
             {/* LEFT PANEL - DATA LAYERS */}
             <ErrorBoundary name="WorldviewLeftPanel">
-              <WorldviewLeftPanel data={data} activeLayers={activeLayers} setActiveLayers={setActiveLayers} onSettingsClick={() => setSettingsOpen(true)} onLegendClick={() => setLegendOpen(true)} gibsDate={gibsDate} setGibsDate={setGibsDate} gibsOpacity={gibsOpacity} setGibsOpacity={setGibsOpacity} onEntityClick={setSelectedEntity} onFlyTo={(lat, lng) => setFlyToLocation({ lat, lng, ts: Date.now() })} trackedSdr={trackedSdr} setTrackedSdr={setTrackedSdr} pikudTimeOffset={pikudTimeOffset} setPikudTimeOffset={setPikudTimeOffset} pikudDbRange={pikudDbRange} />
+              <WorldviewLeftPanel data={data} activeLayers={activeLayers} setActiveLayers={setActiveLayers} onSettingsClick={() => setSettingsOpen(true)} onLegendClick={() => setLegendOpen(true)} gibsDate={gibsDate} setGibsDate={setGibsDate} gibsOpacity={gibsOpacity} setGibsOpacity={setGibsOpacity} onEntityClick={setSelectedEntity} onFlyTo={(lat, lng) => setFlyToLocation({ lat, lng, ts: Date.now() })} trackedSdr={trackedSdr} setTrackedSdr={setTrackedSdr} pikudTimeOffset={pikudTimeOffset} setPikudTimeOffset={setPikudTimeOffset} pikudDbRange={pikudDbRange} ukraineTimeOffset={ukraineTimeOffset} setUkraineTimeOffset={setUkraineTimeOffset} ukraineDbRange={ukraineDbRange} />
             </ErrorBoundary>
           </motion.div>
 

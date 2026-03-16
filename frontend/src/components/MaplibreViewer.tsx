@@ -57,7 +57,7 @@ import {
     type FlightLayerConfig,
 } from "@/components/map/geoJSONBuilders";
 
-const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, selectedEntity, onMouseCoords, onRightClick, regionDossier, regionDossierLoading, onViewStateChange, measureMode, onMeasureClick, measurePoints, gibsDate, gibsOpacity, viewBoundsRef, setTrackedSdr, pikudTimeOffset, pikudHistoryData }: MaplibreViewerProps) => {
+const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, selectedEntity, onMouseCoords, onRightClick, regionDossier, regionDossierLoading, onViewStateChange, measureMode, onMeasureClick, measurePoints, gibsDate, gibsOpacity, viewBoundsRef, setTrackedSdr, pikudTimeOffset, pikudHistoryData, ukraineTimeOffset, ukraineHistoryData }: MaplibreViewerProps) => {
     const mapRef = useRef<MapRef>(null);
     const [mapReady, setMapReady] = useState(false);
     const { theme } = useTheme();
@@ -270,6 +270,39 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
         if (!features.length) return null;
         return { type: "FeatureCollection" as const, features };
     }, [activeLayers.pikud_alerts, data?.pikud_alerts, pikudTimeOffset, pikudHistoryData]);
+
+    // Ukraine oblast alerts — color-coded by alert type
+    const ukraineAlertsGeoJSON = useMemo(() => {
+        if (!activeLayers.ukraine_alerts) return null;
+        const isLive = ukraineTimeOffset === null || ukraineTimeOffset === undefined || ukraineTimeOffset === 0;
+        const alerts = isLive ? (data?.ukraine_alerts ?? []) : (ukraineHistoryData ?? []);
+        if (!alerts.length) return null;
+        const refSec = isLive
+            ? Date.now() / 1000
+            : Date.now() / 1000 + (ukraineTimeOffset ?? 0) * 60;
+        const features = alerts.flatMap((a: any, i: number) => {
+            const ageMins = (refSec - (a.ts ?? 0)) / 60;
+            if (isLive && ageMins > 60) return [];
+            if (ageMins < 0) return [];
+            return [{
+                type: "Feature" as const,
+                geometry: { type: "Point" as const, coordinates: [a.lng, a.lat] },
+                properties: {
+                    id: `ukraine-${i}`,
+                    type: "ukraine_alert",
+                    region: a.region,
+                    alert_type: a.type,
+                    type_label: a.type_label,
+                    color: a.color ?? "#ff2222",
+                    timestamp: a.timestamp,
+                    ts: a.ts,
+                    active: a.active ?? false,
+                },
+            }];
+        });
+        if (!features.length) return null;
+        return { type: "FeatureCollection" as const, features };
+    }, [activeLayers.ukraine_alerts, data?.ukraine_alerts, ukraineTimeOffset, ukraineHistoryData]);
 
     // Load Images into the Map Style once loaded
     const onMapLoad = useCallback((e: any) => {
@@ -640,6 +673,7 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
         militaryBasesGeoJSON && 'military-bases-layer',
         firmsGeoJSON && 'firms-viirs-layer',
         pikudAlertsGeoJSON && 'pikud-alerts-layer',
+        ukraineAlertsGeoJSON && 'ukraine-alerts-layer',
     ].filter(Boolean) as string[];
 
 
@@ -1605,6 +1639,51 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                                     'recent', '#fdba74',
                                     'old',    '#fde047',
                                     '#fca5a5'],
+                                'text-halo-color': 'rgba(0,0,0,0.9)',
+                                'text-halo-width': 1,
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* Ukraine oblast alerts — color-coded by alert type */}
+                {ukraineAlertsGeoJSON && (
+                    <Source id="ukraine-alerts" type="geojson" data={ukraineAlertsGeoJSON as any}>
+                        <Layer
+                            id="ukraine-alerts-pulse"
+                            type="circle"
+                            paint={{
+                                'circle-color': ['get', 'color'],
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 20, 6, 35, 10, 50],
+                                'circle-opacity': 0.15,
+                                'circle-stroke-width': 0,
+                            }}
+                        />
+                        <Layer
+                            id="ukraine-alerts-layer"
+                            type="circle"
+                            paint={{
+                                'circle-color': ['get', 'color'],
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 6, 6, 10, 10, 14],
+                                'circle-opacity': ['case', ['get', 'active'], 1.0, 0.7],
+                                'circle-stroke-width': 1.5,
+                                'circle-stroke-color': ['get', 'color'],
+                            }}
+                        />
+                        <Layer
+                            id="ukraine-alerts-label"
+                            type="symbol"
+                            minzoom={5}
+                            layout={{
+                                'text-field': ['get', 'region'],
+                                'text-font': ['Noto Sans Bold'],
+                                'text-size': 10,
+                                'text-offset': [0, 1.4],
+                                'text-anchor': 'top',
+                                'text-allow-overlap': false,
+                            }}
+                            paint={{
+                                'text-color': ['get', 'color'],
                                 'text-halo-color': 'rgba(0,0,0,0.9)',
                                 'text-halo-width': 1,
                             }}

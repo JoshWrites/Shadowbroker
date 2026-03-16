@@ -43,6 +43,7 @@ const FRESHNESS_MAP: Record<string, string> = {
     internet_outages: "internet_outages",
     datacenters: "datacenters",
     pikud_alerts: "pikud_alerts",
+    ukraine_alerts: "ukraine_alerts",
 };
 
 // POTUS fleet ICAO hex codes for client-side filtering
@@ -63,16 +64,20 @@ const POTUS_ICAOS: Record<string, { label: string; type: string }> = {
     'AE5E79': { label: 'Marine One (VH-92A)', type: 'M1' },
 };
 import type { DashboardData, ActiveLayers, SelectedEntity, KiwiSDR } from "@/types/dashboard";
+import UkraineDrilldownModal from "@/components/UkraineDrilldownModal";
 
-const WorldviewLeftPanel = React.memo(function WorldviewLeftPanel({ data, activeLayers, setActiveLayers, onSettingsClick, onLegendClick, gibsDate, setGibsDate, gibsOpacity, setGibsOpacity, onEntityClick, onFlyTo, trackedSdr, setTrackedSdr, pikudTimeOffset, setPikudTimeOffset, pikudDbRange }: { data: DashboardData; activeLayers: ActiveLayers; setActiveLayers: React.Dispatch<React.SetStateAction<ActiveLayers>>; onSettingsClick?: () => void; onLegendClick?: () => void; gibsDate?: string; setGibsDate?: (d: string) => void; gibsOpacity?: number; setGibsOpacity?: (o: number) => void; onEntityClick?: (entity: SelectedEntity) => void; onFlyTo?: (lat: number, lng: number) => void; trackedSdr?: KiwiSDR | null; setTrackedSdr?: (sdr: KiwiSDR | null) => void; pikudTimeOffset?: number | null; setPikudTimeOffset?: React.Dispatch<React.SetStateAction<number | null>>; pikudDbRange?: { earliest: number | null; latest: number | null } }) {
+const WorldviewLeftPanel = React.memo(function WorldviewLeftPanel({ data, activeLayers, setActiveLayers, onSettingsClick, onLegendClick, gibsDate, setGibsDate, gibsOpacity, setGibsOpacity, onEntityClick, onFlyTo, trackedSdr, setTrackedSdr, pikudTimeOffset, setPikudTimeOffset, pikudDbRange, ukraineTimeOffset, setUkraineTimeOffset, ukraineDbRange }: { data: DashboardData; activeLayers: ActiveLayers; setActiveLayers: React.Dispatch<React.SetStateAction<ActiveLayers>>; onSettingsClick?: () => void; onLegendClick?: () => void; gibsDate?: string; setGibsDate?: (d: string) => void; gibsOpacity?: number; setGibsOpacity?: (o: number) => void; onEntityClick?: (entity: SelectedEntity) => void; onFlyTo?: (lat: number, lng: number) => void; trackedSdr?: KiwiSDR | null; setTrackedSdr?: (sdr: KiwiSDR | null) => void; pikudTimeOffset?: number | null; setPikudTimeOffset?: React.Dispatch<React.SetStateAction<number | null>>; pikudDbRange?: { earliest: number | null; latest: number | null }; ukraineTimeOffset?: number | null; setUkraineTimeOffset?: React.Dispatch<React.SetStateAction<number | null>>; ukraineDbRange?: { earliest: number | null; latest: number | null } }) {
     const [isMinimized, setIsMinimized] = useState(false);
     const { theme, toggleTheme, hudColor, cycleHudColor } = useTheme();
     const [gibsPlaying, setGibsPlaying] = useState(false);
     const [pikudPlaying, setPikudPlaying] = useState(false);
     const [pikudDrilldownOpen, setPikudDrilldownOpen] = useState(false);
+    const [ukrainePlaying, setUkrainePlaying] = useState(false);
+    const [ukraineDrilldownOpen, setUkraineDrilldownOpen] = useState(false);
     const [potusEnabled, setPotusEnabled] = useState(true);
     const gibsIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const pikudIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const ukraineIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     // GIBS time slider play/pause animation
     useEffect(() => {
@@ -122,6 +127,27 @@ const WorldviewLeftPanel = React.memo(function WorldviewLeftPanel({ data, active
         }, 800);
         return () => { if (pikudIntervalRef.current) clearInterval(pikudIntervalRef.current); };
     }, [pikudPlaying, setPikudTimeOffset]);
+
+    // Ukraine 24h playback
+    useEffect(() => {
+        if (!ukrainePlaying || !setUkraineTimeOffset) {
+            if (ukraineIntervalRef.current) clearInterval(ukraineIntervalRef.current);
+            ukraineIntervalRef.current = null;
+            return;
+        }
+        if (ukraineTimeOffset === null || ukraineTimeOffset === 0) {
+            setUkraineTimeOffset(-1440);
+        }
+        ukraineIntervalRef.current = setInterval(() => {
+            setUkraineTimeOffset((prev: number | null) => {
+                const current = prev ?? -1440;
+                const next = current + 10;
+                if (next >= 0) { setUkrainePlaying(false); return null; }
+                return next;
+            });
+        }, 800);
+        return () => { if (ukraineIntervalRef.current) clearInterval(ukraineIntervalRef.current); };
+    }, [ukrainePlaying, setUkraineTimeOffset]);
 
     // Compute ship category counts (memoized — ships array can be 1000+ items)
     const { militaryShipCount, cargoShipCount, passengerShipCount, civilianShipCount, trackedYachtCount } = useMemo(() => {
@@ -179,6 +205,7 @@ const WorldviewLeftPanel = React.memo(function WorldviewLeftPanel({ data, active
         { id: "datacenters", name: "Data Centers", source: "DC Map (GitHub)", count: data?.datacenters?.length || 0, icon: Server },
         { id: "military_bases", name: "Military Bases", source: "OSINT (Static)", count: data?.military_bases?.length || 0, icon: Shield },
         { id: "pikud_alerts", name: "Israel Red Alerts", source: "Pikud HaOref", count: data?.pikud_alerts?.length || 0, icon: AlertTriangle },
+        { id: "ukraine_alerts", name: "Ukraine Air Alerts", source: "alerts.in.ua", count: data?.ukraine_alerts?.length || 0, icon: AlertTriangle },
         { id: "day_night", name: "Day / Night Cycle", source: "Solar Calc", count: null, icon: Sun },
     ];
 
@@ -480,6 +507,67 @@ const WorldviewLeftPanel = React.memo(function WorldviewLeftPanel({ data, active
                                                     pikudDbRange={pikudDbRange}
                                                     setPikudTimeOffset={setPikudTimeOffset}
                                                     pikudTimeOffset={pikudTimeOffset ?? null}
+                                                />
+                                            )}
+                                            {active && layer.id === 'ukraine_alerts' && setUkraineTimeOffset && (
+                                                <div className="ml-7 mt-2 flex flex-col gap-1" onClick={e => e.stopPropagation()}>
+                                                    <div className="flex items-center gap-2">
+                                                        <button
+                                                            onClick={() => setUkrainePlaying(p => !p)}
+                                                            className="w-5 h-5 flex items-center justify-center rounded border border-blue-500/30 text-blue-400 hover:bg-blue-950/30 transition-colors flex-shrink-0"
+                                                        >
+                                                            {ukrainePlaying ? <Pause size={10} /> : <Play size={10} />}
+                                                        </button>
+                                                        <input
+                                                            type="range"
+                                                            min={-1440}
+                                                            max={0}
+                                                            step={5}
+                                                            value={ukraineTimeOffset ?? 0}
+                                                            onChange={e => {
+                                                                setUkrainePlaying(false);
+                                                                const v = parseInt(e.target.value);
+                                                                setUkraineTimeOffset(v === 0 ? null : v);
+                                                            }}
+                                                            className="flex-1 h-1 accent-blue-500 cursor-pointer"
+                                                        />
+                                                    </div>
+                                                    <div className="flex items-center justify-between">
+                                                        <span className="text-[8px] text-blue-400 font-mono">
+                                                            {ukraineTimeOffset === null || ukraineTimeOffset === 0
+                                                                ? "LIVE"
+                                                                : (() => {
+                                                                    const mins = Math.abs(ukraineTimeOffset ?? 0);
+                                                                    if (mins < 60) return `${mins}m ago`;
+                                                                    const h = Math.floor(mins / 60);
+                                                                    const m = mins % 60;
+                                                                    return m ? `${h}h ${m}m ago` : `${h}h ago`;
+                                                                })()}
+                                                        </span>
+                                                        <div className="flex items-center gap-2">
+                                                            {ukraineTimeOffset !== null && ukraineTimeOffset !== 0 && (
+                                                                <button
+                                                                    onClick={() => { setUkrainePlaying(false); setUkraineTimeOffset(null); }}
+                                                                    className="text-[8px] text-blue-400 hover:text-blue-300 font-mono underline"
+                                                                >LIVE</button>
+                                                            )}
+                                                            <button
+                                                                onClick={() => setUkraineDrilldownOpen(true)}
+                                                                title="Archive drill-down"
+                                                                className="flex items-center gap-1 text-[8px] font-mono text-blue-400/70 hover:text-blue-400 transition-colors"
+                                                            >
+                                                                <Search size={9} /> ARCHIVE
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            )}
+                                            {ukraineDrilldownOpen && setUkraineTimeOffset && ukraineDbRange && (
+                                                <UkraineDrilldownModal
+                                                    onClose={() => setUkraineDrilldownOpen(false)}
+                                                    ukraineDbRange={ukraineDbRange}
+                                                    setUkraineTimeOffset={setUkraineTimeOffset}
+                                                    ukraineTimeOffset={ukraineTimeOffset ?? null}
                                                 />
                                             )}
                                             {active && layer.id === 'gibs_imagery' && gibsDate && setGibsDate && setGibsOpacity && (

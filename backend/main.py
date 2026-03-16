@@ -43,6 +43,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from services.data_fetcher import start_scheduler, stop_scheduler, get_latest_data, source_timestamps
 from services.fetchers.pikud_haoref import query_alerts, get_db_time_range
+from services.fetchers.ukraine_alerts import query_ukraine_alerts, get_ukraine_db_time_range
 from services.ais_stream import start_ais_stream, stop_ais_stream
 from services.carrier_tracker import start_carrier_tracker, stop_carrier_tracker
 from services.schemas import HealthResponse, RefreshResponse
@@ -263,7 +264,8 @@ async def live_data_fast(request: Request,
         "gps_jamming": _f(d.get("gps_jamming", [])),
         "satellites": _f(d.get("satellites", [])),
         "satellite_source": d.get("satellite_source", "none"),
-        "pikud_alerts": _f(d.get("pikud_alerts", [])),  # Live ring buffer — updated every 5s
+        "pikud_alerts": _f(d.get("pikud_alerts", [])),      # Live ring buffer — updated every 5s
+        "ukraine_alerts": _f(d.get("ukraine_alerts", [])),  # Live ring buffer — updated every 30s
         "freshness": dict(source_timestamps),
     }
     bbox_tag = f"{s},{w},{n},{e}" if has_bbox else "full"
@@ -311,6 +313,17 @@ async def pikud_history(request: Request, from_ts: float = Query(None), until_ts
 async def pikud_db_range(request: Request):
     """Return the earliest and latest timestamps stored in the Pikud SQLite DB."""
     return get_db_time_range()
+
+@app.get("/api/ukraine-alerts/history")
+async def ukraine_history(request: Request, from_ts: float = Query(None), until_ts: float = Query(None)):
+    """Return Ukraine oblast alerts between two Unix timestamps from SQLite."""
+    rows = query_ukraine_alerts(from_ts, until_ts)
+    return {"alerts": rows}
+
+@app.get("/api/ukraine-alerts/range")
+async def ukraine_db_range(request: Request):
+    """Return the earliest and latest timestamps stored in the Ukraine SQLite DB."""
+    return get_ukraine_db_time_range()
 
 @app.get("/api/debug-latest")
 async def debug_latest_data(request: Request):

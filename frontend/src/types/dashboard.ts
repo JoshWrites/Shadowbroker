@@ -303,6 +303,22 @@ export interface PikudAlert {
   ts: number;
 }
 
+// ─── UKRAINE ALERTS ─────────────────────────────────────────────────────────
+
+export interface UkraineAlert {
+  id: string;
+  region: string;
+  region_id: number;
+  lat: number;
+  lng: number;
+  type: string;
+  type_label: string;
+  color: string;
+  timestamp: string;
+  ts: number;
+  active?: boolean;
+}
+
 // ─── LIVEUAMAP ──────────────────────────────────────────────────────────────
 
 export interface LiveUAmapIncident {
@@ -437,6 +453,7 @@ export interface DashboardData {
 
   // Fast tier (live ring buffer, updated every 5s on backend)
   pikud_alerts?: PikudAlert[];
+  ukraine_alerts?: UkraineAlert[];
 }
 
 // ─── COMPONENT PROPS ────────────────────────────────────────────────────────
@@ -467,6 +484,7 @@ export interface ActiveLayers {
   datacenters: boolean;
   military_bases: boolean;
   pikud_alerts: boolean;
+  ukraine_alerts: boolean;
 }
 
 export interface SelectedEntity {
@@ -516,4 +534,7 @@ export interface MaplibreViewerProps {
   // Pikud HaOref time scrubber (null = live mode)
   pikudTimeOffset?: number | null;
   pikudHistoryData?: PikudAlert[];
+  // Ukraine time scrubber (null = live mode)
+  ukraineTimeOffset?: number | null;
+  ukraineHistoryData?: UkraineAlert[];
 }

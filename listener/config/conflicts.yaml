@@ -19,14 +19,14 @@ conflicts:
     history_poll_minutes: 30
     notes: "May require Israeli-IP proxy in some network environments"
 
-  # ukraine:
-  #   enabled: false
-  #   name: "Russian Invasion of Ukraine"
-  #   signal: "ukraine_alerts"
-  #   collector: "ukraine"
-  #   description: "Oblast-level air raid and artillery alerts via alerts.in.ua"
-  #   poll_seconds: 30
-  #   notes: "Requires bearer token from devs.alerts.in.ua"
+  ukraine:
+    enabled: true
+    name: "Russian Invasion of Ukraine"
+    signal: "ukraine_alerts"
+    collector: "ukraine"
+    description: "Oblast-level air raid and artillery alerts via alerts.in.ua"
+    poll_seconds: 30
+    notes: "Requires UKRAINE_ALERTS_TOKEN env var — register at devs.alerts.in.ua"
 
   # nws_usa:
   #   enabled: false
