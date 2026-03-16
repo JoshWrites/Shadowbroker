@@ -45,9 +45,6 @@ from services.data_fetcher import start_scheduler, stop_scheduler, get_latest_da
 from services.fetchers.pikud_haoref import query_alerts, get_db_time_range
 from services.ais_stream import start_ais_stream, stop_ais_stream
 from services.carrier_tracker import start_carrier_tracker, stop_carrier_tracker
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
 from services.schemas import HealthResponse, RefreshResponse
 import uvicorn
 import hashlib
@@ -55,7 +52,6 @@ import json as json_mod
 import socket
 import threading
 
-limiter = Limiter(key_func=get_remote_address)
 
 # ---------------------------------------------------------------------------
 # Admin authentication — protects settings & system endpoints
@@ -137,8 +133,6 @@ async def lifespan(app: FastAPI):
     stop_carrier_tracker()
 
 app = FastAPI(title="Live Risk Dashboard API", lifespan=lifespan)
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 from fastapi.middleware.gzip import GZipMiddleware
 app.add_middleware(GZipMiddleware, minimum_size=1000)
@@ -155,7 +149,6 @@ from services.data_fetcher import update_all_data
 _refresh_lock = threading.Lock()
 
 @app.get("/api/refresh", response_model=RefreshResponse)
-@limiter.limit("2/minute")
 async def force_refresh(request: Request):
     if not _refresh_lock.acquire(blocking=False):
         return {"status": "refresh already in progress"}
@@ -169,7 +162,6 @@ async def force_refresh(request: Request):
     return {"status": "refreshing in background"}
 
 @app.post("/api/ais/feed")
-@limiter.limit("60/minute")
 async def ais_feed(request: Request):
     """Accept AIS-catcher HTTP JSON feed (POST decoded AIS messages)."""
     from services.ais_stream import ingest_ais_catcher
@@ -193,7 +185,6 @@ class ViewportUpdate(BaseModel):
     e: float
 
 @app.post("/api/viewport")
-@limiter.limit("60/minute")
 async def update_viewport(vp: ViewportUpdate, request: Request):
     """Receive frontend map bounds to dynamically choke the AIS stream."""
     from services.ais_stream import update_ais_bbox
@@ -211,7 +202,6 @@ async def update_viewport(vp: ViewportUpdate, request: Request):
     return {"status": "ok"}
 
 @app.get("/api/live-data")
-@limiter.limit("120/minute")
 async def live_data(request: Request):
     return get_latest_data()
 
@@ -251,7 +241,6 @@ def _bbox_filter(items: list, s: float, w: float, n: float, e: float,
     return out
 
 @app.get("/api/live-data/fast")
-@limiter.limit("120/minute")
 async def live_data_fast(request: Request,
                          s: float = Query(None, description="South bound"),
                          w: float = Query(None, description="West bound"),
@@ -281,7 +270,6 @@ async def live_data_fast(request: Request,
     return _etag_response(request, payload, prefix=f"fast|{bbox_tag}|")
 
 @app.get("/api/live-data/slow")
-@limiter.limit("60/minute")
 async def live_data_slow(request: Request,
                          s: float = Query(None, description="South bound"),
                          w: float = Query(None, description="West bound"),
@@ -314,26 +302,22 @@ async def live_data_slow(request: Request,
     return _etag_response(request, payload, prefix=f"slow|{bbox_tag}|", default=str)
 
 @app.get("/api/pikud-alerts/history")
-@limiter.limit("30/minute")
 async def pikud_history(request: Request, from_ts: float = Query(None), until_ts: float = Query(None)):
     """Return Pikud HaOref alerts between two Unix timestamps from SQLite."""
     rows = query_alerts(from_ts, until_ts)
     return {"alerts": rows}
 
 @app.get("/api/pikud-alerts/range")
-@limiter.limit("30/minute")
 async def pikud_db_range(request: Request):
     """Return the earliest and latest timestamps stored in the Pikud SQLite DB."""
     return get_db_time_range()
 
 @app.get("/api/debug-latest")
-@limiter.limit("30/minute")
 async def debug_latest_data(request: Request):
     return list(get_latest_data().keys())
 
 
 @app.get("/api/health", response_model=HealthResponse)
-@limiter.limit("30/minute")
 async def health_check(request: Request):
     import time
     d = get_latest_data()
@@ -363,22 +347,18 @@ async def health_check(request: Request):
 from services.radio_intercept import get_top_broadcastify_feeds, get_openmhz_systems, get_recent_openmhz_calls, find_nearest_openmhz_system
 
 @app.get("/api/radio/top")
-@limiter.limit("30/minute")
 async def get_top_radios(request: Request):
     return get_top_broadcastify_feeds()
 
 @app.get("/api/radio/openmhz/systems")
-@limiter.limit("30/minute")
 async def api_get_openmhz_systems(request: Request):
     return get_openmhz_systems()
 
 @app.get("/api/radio/openmhz/calls/{sys_name}")
-@limiter.limit("60/minute")
 async def api_get_openmhz_calls(request: Request, sys_name: str):
     return get_recent_openmhz_calls(sys_name)
 
 @app.get("/api/radio/nearest")
-@limiter.limit("60/minute")
 async def api_get_nearest_radio(
     request: Request,
     lat: float = Query(..., ge=-90, le=90),
@@ -389,7 +369,6 @@ async def api_get_nearest_radio(
 from services.radio_intercept import find_nearest_openmhz_systems_list
 
 @app.get("/api/radio/nearest-list")
-@limiter.limit("60/minute")
 async def api_get_nearest_radios_list(
     request: Request,
     lat: float = Query(..., ge=-90, le=90),
@@ -401,7 +380,6 @@ async def api_get_nearest_radios_list(
 from services.network_utils import fetch_with_curl
 
 @app.get("/api/route/{callsign}")
-@limiter.limit("60/minute")
 async def get_flight_route(request: Request, callsign: str, lat: float = 0.0, lng: float = 0.0):
     r = fetch_with_curl("https://api.adsb.lol/api/0/routeset", method="POST", json_data={"planes": [{"callsign": callsign, "lat": lat, "lng": lng}]}, timeout=10)
     if r and r.status_code == 200:
@@ -429,7 +407,6 @@ async def get_flight_route(request: Request, callsign: str, lat: float = 0.0, ln
 from services.region_dossier import get_region_dossier
 
 @app.get("/api/region-dossier")
-@limiter.limit("30/minute")
 def api_region_dossier(
     request: Request,
     lat: float = Query(..., ge=-90, le=90),
@@ -441,7 +418,6 @@ def api_region_dossier(
 from services.sentinel_search import search_sentinel2_scene
 
 @app.get("/api/sentinel2/search")
-@limiter.limit("30/minute")
 def api_sentinel2_search(
     request: Request,
     lat: float = Query(..., ge=-90, le=90),
@@ -461,12 +437,10 @@ class ApiKeyUpdate(BaseModel):
     value: str
 
 @app.get("/api/settings/api-keys", dependencies=[Depends(require_admin)])
-@limiter.limit("30/minute")
 async def api_get_keys(request: Request):
     return get_api_keys()
 
 @app.put("/api/settings/api-keys", dependencies=[Depends(require_admin)])
-@limiter.limit("10/minute")
 async def api_update_key(request: Request, body: ApiKeyUpdate):
     ok = update_api_key(body.env_key, body.value)
     if ok:
@@ -479,12 +453,10 @@ async def api_update_key(request: Request, body: ApiKeyUpdate):
 from services.news_feed_config import get_feeds, save_feeds, reset_feeds
 
 @app.get("/api/settings/news-feeds")
-@limiter.limit("30/minute")
 async def api_get_news_feeds(request: Request):
     return get_feeds()
 
 @app.put("/api/settings/news-feeds", dependencies=[Depends(require_admin)])
-@limiter.limit("10/minute")
 async def api_save_news_feeds(request: Request):
     body = await request.json()
     ok = save_feeds(body)
@@ -497,7 +469,6 @@ async def api_save_news_feeds(request: Request):
     )
 
 @app.post("/api/settings/news-feeds/reset", dependencies=[Depends(require_admin)])
-@limiter.limit("10/minute")
 async def api_reset_news_feeds(request: Request):
     ok = reset_feeds()
     if ok:
@@ -511,7 +482,6 @@ from pathlib import Path
 from services.updater import perform_update, schedule_restart
 
 @app.post("/api/system/update", dependencies=[Depends(require_admin)])
-@limiter.limit("1/minute")
 async def system_update(request: Request):
     """Download latest release, backup current files, extract update, and restart."""
     # In Docker, __file__ is /app/main.py so .parent.parent resolves to /

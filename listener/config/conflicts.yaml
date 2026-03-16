@@ -1,0 +1,38 @@
+# Signal Archive — Conflict Registry
+#
+# Each entry defines one data source. The archive will only collect
+# from sources where enabled: true.
+#
+# Adding a new conflict = add an entry here + a collector file.
+# No code changes needed to enable/disable recording.
+
+conflicts:
+
+  pikud_haoref:
+    enabled: true
+    name: "Arab-Israeli / Iran-Israel Conflict"
+    signal: "pikud_alerts"
+    collector: "pikud"
+    description: "Israel Home Front Command rocket/missile/threat alerts"
+    poll_seconds: 5
+    # History endpoint fetched at startup + every 30 min to catch gaps
+    history_poll_minutes: 30
+    notes: "May require Israeli-IP proxy in some network environments"
+
+  # ukraine:
+  #   enabled: false
+  #   name: "Russian Invasion of Ukraine"
+  #   signal: "ukraine_alerts"
+  #   collector: "ukraine"
+  #   description: "Oblast-level air raid and artillery alerts via alerts.in.ua"
+  #   poll_seconds: 30
+  #   notes: "Requires bearer token from devs.alerts.in.ua"
+
+  # nws_usa:
+  #   enabled: false
+  #   name: "USA FEMA/NWS All-Hazards"
+  #   signal: "nws_alerts"
+  #   collector: "nws"
+  #   description: "FEMA IPAWS / National Weather Service alerts (GeoJSON)"
+  #   poll_seconds: 60
+  #   notes: "Fully open, no auth required"

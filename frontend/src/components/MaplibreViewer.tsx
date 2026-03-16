@@ -246,9 +246,9 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
             : Date.now() / 1000 + (pikudTimeOffset ?? 0) * 60;
         const features = alerts.flatMap((a: any, i: number) => {
             const ageMins = (refSec - (a.ts ?? 0)) / 60;
-            // Drop alerts more than 30 minutes before the reference point
-            if (ageMins > 30) return [];
-            // Alerts after the reference point (shouldn't happen, but guard it)
+            // In history mode the fetch window already bounds to 30 min — don't re-filter.
+            // In live mode drop anything older than 30 min or in the future.
+            if (isLive && ageMins > 30) return [];
             if (ageMins < 0) return [];
             const ageClass = ageMins < 10 ? "hot"
                 : ageMins < 20 ? "recent"
@@ -260,13 +260,14 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                     id: `pikud-${i}`,
                     type: "pikud_alert",
                     city: a.city,
-                    category: a.category,
+                    category: a.category ?? a.cat,
                     timestamp: a.timestamp,
                     ts: a.ts,
                     age_class: ageClass,
                 },
             }];
         });
+        console.log('[pikud memo] isLive=', isLive, 'alerts=', alerts.length, 'features=', features.length);
         if (!features.length) return null;
         return { type: "FeatureCollection" as const, features };
     }, [activeLayers.pikud_alerts, data?.pikud_alerts, pikudTimeOffset, pikudHistoryData]);

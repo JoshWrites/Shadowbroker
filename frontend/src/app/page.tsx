@@ -20,7 +20,7 @@ import { DashboardDataProvider } from "@/lib/DashboardDataContext";
 import OnboardingModal, { useOnboarding } from "@/components/OnboardingModal";
 import ChangelogModal, { useChangelog } from "@/components/ChangelogModal";
 import type { SelectedEntity, PikudAlert } from "@/types/dashboard";
-import { API_BASE } from "@/lib/api";
+import { API_BASE, BACKEND_DIRECT } from "@/lib/api";
 import { NOMINATIM_DEBOUNCE_MS } from "@/lib/constants";
 import { useDataPolling } from "@/hooks/useDataPolling";
 import { useReverseGeocode } from "@/hooks/useReverseGeocode";
@@ -182,7 +182,7 @@ export default function Dashboard() {
 
   // Fetch Pikud DB time range on mount
   useEffect(() => {
-    fetch(`${API_BASE}/api/pikud-alerts/range`)
+    fetch(`${BACKEND_DIRECT}/api/pikud-alerts/range`)
       .then(r => r.json())
       .then(d => setPikudDbRange({ earliest: d.earliest ?? null, latest: d.latest ?? null }))
       .catch(() => {});
@@ -191,12 +191,19 @@ export default function Dashboard() {
   // Fetch historical slice whenever offset changes
   useEffect(() => {
     if (pikudTimeOffset === null) { setPikudHistoryData([]); return; }
-    const until = Date.now() / 1000;
-    const from = until + pikudTimeOffset * 60;
-    fetch(`${API_BASE}/api/pikud-alerts/history?from_ts=${from}&until_ts=${until}`)
+    const controller = new AbortController();
+    // refSec is the scrub position — show the 30-minute window ending at refSec
+    const refSec = Date.now() / 1000 + pikudTimeOffset * 60;
+    const from = refSec - 1800; // 30 min before scrub position
+    const until = refSec;       // up to scrub position
+    fetch(`${BACKEND_DIRECT}/api/pikud-alerts/history?from_ts=${from}&until_ts=${until}`, { signal: controller.signal })
       .then(r => r.json())
-      .then(d => setPikudHistoryData(d.alerts ?? []))
-      .catch(() => {});
+      .then(d => {
+        console.log('[pikud scrub] offset=', pikudTimeOffset, 'alerts=', d.alerts?.length, 'sample=', d.alerts?.[0]);
+        setPikudHistoryData(d.alerts ?? []);
+      })
+      .catch(e => { if (e.name !== 'AbortError') console.error('[pikud scrub] fetch error:', e); });
+    return () => controller.abort();
   }, [pikudTimeOffset]);
 
   const [effects, setEffects] = useState({
