@@ -608,7 +608,7 @@ def _tzofar_listener_loop():
                     ping_interval=60,
                     ping_timeout=420,
                     open_timeout=20,
-                    extra_headers={
+                    additional_headers={
                         "User-Agent": "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36",
                         "Origin": "https://www.tzevaadom.co.il",
                     },
@@ -865,6 +865,34 @@ def _backfill_gap():
 
     except Exception as e:
         logger.error(f"Backfill: unexpected error: {e}", exc_info=True)
+    finally:
+        # Seed the live payload from DB so recent alerts show immediately
+        _seed_live_from_db()
+
+
+def _seed_live_from_db():
+    """Load recent ALERT rows from the DB into latest_data so the frontend
+    can display them before the next WebSocket push arrives."""
+    try:
+        cutoff = _time_mod.time() - 30 * 60  # 30-minute live window
+        with _db_lock:
+            conn = sqlite3.connect(_DB_PATH)
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM pikud_alerts WHERE ts >= ? AND msg_type = 'ALERT' ORDER BY ts DESC",
+                (cutoff,),
+            ).fetchall()
+            conn.close()
+        if rows:
+            feats = [dict(r) for r in rows if r["lat"] is not None]
+            # Also populate the ring buffer so subsequent WS pushes merge correctly
+            _add_to_ring(feats)
+            with _data_lock:
+                latest_data["pikud_alerts"] = feats
+            _mark_fresh("pikud_alerts")
+            logger.info(f"Seeded live pikud_alerts with {len(feats)} recent alerts from DB")
+    except Exception as e:
+        logger.error(f"Seed live from DB failed: {e}", exc_info=True)
 
 
 def start_tzofar_listener():
