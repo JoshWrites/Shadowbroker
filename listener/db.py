@@ -194,17 +194,17 @@ def init_pikud_db() -> None:
 
         if "events" in tables:
             migrated = 0
+            conn.row_factory = sqlite3.Row
             rows = conn.execute("SELECT * FROM events").fetchall()
-            col_names = [d[0] for d in conn.description] if conn.description else []
-            # Build col index map
-            ci = {name: i for i, name in enumerate(col_names)}
+            conn.row_factory = None
             for r in rows:
+                rd = dict(r)
                 try:
-                    payload = json.loads(r[ci["payload"]]) if "payload" in ci else {}
-                    row_id = r[ci["id"]]
-                    ts = r[ci["ts"]]
-                    lat = r[ci.get("lat", -1)] if "lat" in ci else None
-                    lng = r[ci.get("lng", -1)] if "lng" in ci else None
+                    payload = json.loads(rd.get("payload", "{}"))
+                    row_id = rd["id"]
+                    ts = rd["ts"]
+                    lat = rd.get("lat")
+                    lng = rd.get("lng")
                     msg_type = payload.get("msg_type", "ALERT")
                     conn.execute(
                         """INSERT OR IGNORE INTO pikud_alerts
