@@ -687,8 +687,8 @@ def _backfill_from_listener(gap_start: float, now_ts: float) -> bool:
         with urllib.request.urlopen(range_req, timeout=10) as resp:
             listener_range = json.loads(resp.read().decode())
 
-        if not listener_range.get("latest") or listener_range["latest"] <= gap_start:
-            logger.info("Backfill: listener has no data covering the gap — falling back to Oref")
+        if not listener_range.get("latest") or not listener_range.get("count"):
+            logger.info("Backfill: listener has no data — falling back to Oref")
             return False
 
         logger.info(
@@ -743,9 +743,11 @@ def _backfill_gap():
         # --- 1. Detect gap ---
         with _db_lock:
             conn = sqlite3.connect(_DB_PATH)
-            row = conn.execute("SELECT MAX(ts) FROM pikud_alerts").fetchone()
+            row = conn.execute("SELECT MIN(ts), MAX(ts), COUNT(*) FROM pikud_alerts").fetchone()
             conn.close()
-        last_ts = row[0] if row and row[0] else None
+        first_ts = row[0] if row and row[0] else None
+        last_ts = row[1] if row and row[1] else None
+        local_count = row[2] if row else 0
         now_ts = _time_mod.time()
 
         if last_ts is None:
@@ -753,16 +755,20 @@ def _backfill_gap():
             gap_start = 0.0
         else:
             gap_seconds = now_ts - last_ts
-            if gap_seconds < 60:
-                logger.info(f"Backfill: gap is only {gap_seconds:.0f}s — no backfill needed")
-                return
             gap_hours = gap_seconds / 3600
-            logger.info(f"Backfill: detected {gap_hours:.1f}h gap (last event {datetime.fromtimestamp(last_ts, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC)")
+            logger.info(
+                f"Backfill: {local_count} local rows, "
+                f"range {datetime.fromtimestamp(first_ts, tz=timezone.utc).strftime('%Y-%m-%d %H:%M')} "
+                f"to {datetime.fromtimestamp(last_ts, tz=timezone.utc).strftime('%Y-%m-%d %H:%M')} UTC "
+                f"(forward gap: {gap_hours:.1f}h)"
+            )
             gap_start = last_ts
 
-        # --- 2. Try Signal Archive listener first ---
-        if _backfill_from_listener(gap_start, now_ts):
-            return  # Listener had the data — done
+        # --- 2. Try Signal Archive listener ---
+        # Always fetch the full listener range (INSERT OR IGNORE handles dedup).
+        # This covers both forward gaps AND older data the listener has.
+        if _backfill_from_listener(0.0, now_ts):
+            return  # Listener had data — done
 
         # --- 3. Fall back to Oref history API ---
         resp = fetch_with_curl(_OREF_HISTORY_URL, timeout=20, headers=_OREF_HEADERS)
