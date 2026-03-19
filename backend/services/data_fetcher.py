@@ -46,8 +46,12 @@ from services.fetchers.geo import (  # noqa: F401
     fetch_ships, fetch_airports, find_nearest_airport, cached_airports,
     fetch_frontlines, fetch_gdelt, fetch_geopolitics, update_liveuamap,
 )
-from services.fetchers.pikud_haoref import fetch_pikud_haoref, fetch_pikud_history, init_pikud_db, backfill_from_listener  # noqa: F401
+from services.fetchers.pikud_haoref import init_pikud_db, start_tzofar_listener  # noqa: F401
 from services.fetchers.ukraine_alerts import fetch_ukraine_alerts, init_ukraine_db, backfill_ukraine_from_listener  # noqa: F401
+from services.fetchers.cloudflare_radar import (  # noqa: F401
+    fetch_bgp_anomalies, fetch_cf_anomalies, fetch_active_ddos, fetch_internet_quality,
+    init_bgp_db, init_cf_anomalies_db,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +92,8 @@ def update_slow_data():
         fetch_gdelt,
         fetch_datacenters,
         fetch_military_bases,
-        fetch_pikud_history,
+        fetch_cf_anomalies,
+        fetch_active_ddos,
     ]
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(slow_funcs)) as executor:
         futures = [executor.submit(func) for func in slow_funcs]
@@ -112,12 +117,13 @@ def start_scheduler():
     init_db()
     init_pikud_db()
     init_ukraine_db()
-    backfill_from_listener()           # no-op if LISTENER_URL is unset or listener unreachable
+    init_bgp_db()
+    init_cf_anomalies_db()
     backfill_ukraine_from_listener()   # no-op if LISTENER_URL is unset or listener unreachable
     _scheduler = BackgroundScheduler(daemon=True)
 
-    # Pikud HaOref — poll live alerts every 5 seconds (rocket alerts are time-critical)
-    _scheduler.add_job(fetch_pikud_haoref, 'interval', seconds=5, id='pikud_live', max_instances=1, misfire_grace_time=10)
+    # Tzofar WebSocket listener — push-based, runs in its own daemon thread
+    start_tzofar_listener()
 
     # Ukraine — poll active oblast alerts every 30 seconds
     _scheduler.add_job(fetch_ukraine_alerts, 'interval', seconds=30, id='ukraine_live', max_instances=1, misfire_grace_time=15)
@@ -131,6 +137,10 @@ def start_scheduler():
     # Very slow — every 15 minutes
     _scheduler.add_job(fetch_gdelt, 'interval', minutes=15, id='gdelt', max_instances=1, misfire_grace_time=120)
     _scheduler.add_job(update_liveuamap, 'interval', minutes=15, id='liveuamap', max_instances=1, misfire_grace_time=120)
+    _scheduler.add_job(fetch_bgp_anomalies, 'interval', minutes=15, id='bgp_anomalies', max_instances=1, misfire_grace_time=120)
+
+    # IQI — every 30 minutes
+    _scheduler.add_job(fetch_internet_quality, 'interval', minutes=30, id='internet_quality', max_instances=1, misfire_grace_time=120)
 
     # CCTV pipeline refresh — every 10 minutes
     # Instantiate once and reuse — avoids re-creating DB connections on every tick

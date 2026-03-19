@@ -19,6 +19,8 @@ _SECRET_VARS = [
     "LTA_ACCOUNT_KEY",
     "CORS_ORIGINS",
     "ADMIN_KEY",
+    "CLOUDFLARE_RADAR_TOKEN",
+    "UKRAINE_ALERTS_TOKEN",
 ]
 
 for _var in _SECRET_VARS:
@@ -42,8 +44,12 @@ from fastapi import FastAPI, Request, Response, Query, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from services.data_fetcher import start_scheduler, stop_scheduler, get_latest_data, source_timestamps
-from services.fetchers.pikud_haoref import query_alerts, get_db_time_range
+from services.fetchers.pikud_haoref import query_alerts, get_db_time_range, stop_tzofar_listener
 from services.fetchers.ukraine_alerts import query_ukraine_alerts, get_ukraine_db_time_range
+from services.fetchers.cloudflare_radar import (
+    query_bgp_anomalies, get_bgp_db_range,
+    query_cf_anomalies, get_cf_anomalies_db_range,
+)
 from services.ais_stream import start_ais_stream, stop_ais_stream
 from services.carrier_tracker import start_carrier_tracker, stop_carrier_tracker
 from services.schemas import HealthResponse, RefreshResponse
@@ -130,6 +136,7 @@ async def lifespan(app: FastAPI):
     yield
     # Shutdown: Stop all background services
     stop_ais_stream()
+    stop_tzofar_listener()
     stop_scheduler()
     stop_carrier_tracker()
 
@@ -298,6 +305,10 @@ async def live_data_slow(request: Request,
         "firms_fires": _f(d.get("firms_fires", [])),
         "datacenters": _f(d.get("datacenters", [])),
         "military_bases": _f(d.get("military_bases", [])),
+        "bgp_anomalies": d.get("bgp_anomalies", []),
+        "cf_anomalies": d.get("cf_anomalies", []),
+        "active_ddos": d.get("active_ddos", []),
+        "internet_quality": d.get("internet_quality", {}),
         "freshness": dict(source_timestamps),
     }
     bbox_tag = f"{s},{w},{n},{e}" if has_bbox else "full"
@@ -324,6 +335,28 @@ async def ukraine_history(request: Request, from_ts: float = Query(None), until_
 async def ukraine_db_range(request: Request):
     """Return the earliest and latest timestamps stored in the Ukraine SQLite DB."""
     return get_ukraine_db_time_range()
+
+@app.get("/api/bgp-anomalies/history")
+async def bgp_history(request: Request, from_ts: float = Query(None), until_ts: float = Query(None)):
+    """Return BGP anomaly events between two Unix timestamps from SQLite."""
+    rows = query_bgp_anomalies(from_ts, until_ts)
+    return {"events": rows}
+
+@app.get("/api/bgp-anomalies/range")
+async def bgp_db_range(request: Request):
+    """Return the earliest and latest timestamps stored in the BGP anomalies SQLite DB."""
+    return get_bgp_db_range()
+
+@app.get("/api/cf-anomalies/history")
+async def cf_anomalies_history(request: Request, from_ts: float = Query(None), until_ts: float = Query(None)):
+    """Return Cloudflare traffic anomaly events between two Unix timestamps from SQLite."""
+    rows = query_cf_anomalies(from_ts, until_ts)
+    return {"events": rows}
+
+@app.get("/api/cf-anomalies/range")
+async def cf_anomalies_db_range(request: Request):
+    """Return the earliest and latest timestamps stored in the CF anomalies SQLite DB."""
+    return get_cf_anomalies_db_range()
 
 @app.get("/api/debug-latest")
 async def debug_latest_data(request: Request):

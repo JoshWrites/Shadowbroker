@@ -23,6 +23,8 @@ _OPTIONAL = {
     "OPENSKY_CLIENT_ID": "OpenSky OAuth2 — gap-fill flights in Africa/Asia/LatAm",
     "OPENSKY_CLIENT_SECRET": "OpenSky OAuth2 — gap-fill flights in Africa/Asia/LatAm",
     "LTA_ACCOUNT_KEY": "Singapore LTA traffic cameras (CCTV layer)",
+    "CLOUDFLARE_RADAR_TOKEN": "Cloudflare Radar BGP anomalies, traffic anomalies, DDoS arcs, and IQI layers",
+    "UKRAINE_ALERTS_TOKEN": "Ukraine oblast air-raid alerts (alerts.in.ua)",
 }
 
 

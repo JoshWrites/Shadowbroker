@@ -57,7 +57,7 @@ import {
     type FlightLayerConfig,
 } from "@/components/map/geoJSONBuilders";
 
-const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, selectedEntity, onMouseCoords, onRightClick, regionDossier, regionDossierLoading, onViewStateChange, measureMode, onMeasureClick, measurePoints, gibsDate, gibsOpacity, viewBoundsRef, setTrackedSdr, pikudTimeOffset, pikudHistoryData, ukraineTimeOffset, ukraineHistoryData }: MaplibreViewerProps) => {
+const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, selectedEntity, onMouseCoords, onRightClick, regionDossier, regionDossierLoading, onViewStateChange, measureMode, onMeasureClick, measurePoints, gibsDate, gibsOpacity, viewBoundsRef, setTrackedSdr, pikudTimeOffset, pikudHistoryData, ukraineTimeOffset, ukraineHistoryData, bgpTimeOffset, bgpHistoryData, cfTimeOffset, cfHistoryData }: MaplibreViewerProps) => {
     const mapRef = useRef<MapRef>(null);
     const [mapReady, setMapReady] = useState(false);
     const { theme } = useTheme();
@@ -260,7 +260,11 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                     id: `pikud-${i}`,
                     type: "pikud_alert",
                     city: a.city,
-                    category: a.category ?? a.cat,
+                    category: a.cat_label ?? a.category ?? a.cat,
+                    cat: a.cat,
+                    color: a.color,
+                    threat: a.threat,
+                    is_drill: a.is_drill,
                     timestamp: a.timestamp,
                     ts: a.ts,
                     age_class: ageClass,
@@ -303,6 +307,95 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
         if (!features.length) return null;
         return { type: "FeatureCollection" as const, features };
     }, [activeLayers.ukraine_alerts, data?.ukraine_alerts, ukraineTimeOffset, ukraineHistoryData]);
+
+    // BGP anomaly arcs — great circle lines from hijacker to victim country centroid
+    const bgpAnomaliesGeoJSON = useMemo(() => {
+        if (!activeLayers.bgp_anomalies) return null;
+        const isLive = bgpTimeOffset === null || bgpTimeOffset === undefined || bgpTimeOffset === 0;
+        const events = isLive ? (data?.bgp_anomalies ?? []) : (bgpHistoryData ?? []);
+        if (!events.length) return null;
+        const refSec = isLive ? Date.now() / 1000 : Date.now() / 1000 + (bgpTimeOffset ?? 0) * 60;
+        const features = events.flatMap((ev: any) => {
+            const ageMins = (refSec - (ev.ts ?? 0)) / 60;
+            if (isLive && ageMins > 4320) return []; // 3 days in live
+            if (ageMins < 0) return [];
+            return [{
+                type: "Feature" as const,
+                geometry: {
+                    type: "LineString" as const,
+                    coordinates: [[ev.hijacker_lng, ev.hijacker_lat], [ev.victim_lng, ev.victim_lat]],
+                },
+                properties: {
+                    id: ev.id,
+                    type: ev.type,
+                    hijacker_country: ev.hijacker_country,
+                    hijacker_org: ev.hijacker_org,
+                    victim_country: ev.victim_country,
+                    victim_org: ev.victim_org,
+                    confidence_score: ev.confidence_score,
+                    peer_count: ev.peer_count,
+                    timestamp: ev.timestamp,
+                    ts: ev.ts,
+                    color: ev.type === "hijack" ? "#ff4444" : "#ff9900",
+                },
+            }];
+        });
+        if (!features.length) return null;
+        return { type: "FeatureCollection" as const, features };
+    }, [activeLayers.bgp_anomalies, data?.bgp_anomalies, bgpTimeOffset, bgpHistoryData]);
+
+    // CF traffic anomaly points
+    const cfAnomaliesGeoJSON = useMemo(() => {
+        if (!activeLayers.cf_anomalies) return null;
+        const isLive = cfTimeOffset === null || cfTimeOffset === undefined || cfTimeOffset === 0;
+        const events = isLive ? (data?.cf_anomalies ?? []) : (cfHistoryData ?? []);
+        if (!events.length) return null;
+        const refSec = isLive ? Date.now() / 1000 : Date.now() / 1000 + (cfTimeOffset ?? 0) * 60;
+        const features = events.flatMap((ev: any) => {
+            const ageMins = (refSec - (ev.ts ?? 0)) / 60;
+            if (isLive && ageMins > 10080) return []; // 7 days
+            if (ageMins < 0) return [];
+            return [{
+                type: "Feature" as const,
+                geometry: { type: "Point" as const, coordinates: [ev.lng, ev.lat] },
+                properties: {
+                    id: ev.id,
+                    location: ev.location,
+                    location_name: ev.location_name,
+                    status: ev.status,
+                    description: ev.description,
+                    timestamp: ev.timestamp,
+                    ts: ev.ts,
+                },
+            }];
+        });
+        if (!features.length) return null;
+        return { type: "FeatureCollection" as const, features };
+    }, [activeLayers.cf_anomalies, data?.cf_anomalies, cfTimeOffset, cfHistoryData]);
+
+    // Active DDoS arcs — L7 top attack pairs
+    const activeDdosGeoJSON = useMemo(() => {
+        if (!activeLayers.active_ddos) return null;
+        const attacks = data?.active_ddos ?? [];
+        if (!attacks.length) return null;
+        const features = attacks.map((a: any) => ({
+            type: "Feature" as const,
+            geometry: {
+                type: "LineString" as const,
+                coordinates: [[a.origin_lng, a.origin_lat], [a.target_lng, a.target_lat]],
+            },
+            properties: {
+                id: a.id,
+                origin_country: a.origin_country,
+                origin_country_name: a.origin_country_name,
+                target_country: a.target_country,
+                target_country_name: a.target_country_name,
+                requests_percent: a.requests_percent,
+                layer: a.layer,
+            },
+        }));
+        return { type: "FeatureCollection" as const, features };
+    }, [activeLayers.active_ddos, data?.active_ddos]);
 
     // Load Images into the Map Style once loaded
     const onMapLoad = useCallback((e: any) => {
@@ -682,6 +775,9 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
         firmsGeoJSON && 'firms-viirs-layer',
         pikudAlertsGeoJSON && 'pikud-alerts-layer',
         ukraineAlertsGeoJSON && 'ukraine-alerts-layer',
+        bgpAnomaliesGeoJSON && 'bgp-anomalies-layer',
+        cfAnomaliesGeoJSON && 'cf-anomalies-layer',
+        activeDdosGeoJSON && 'active-ddos-layer',
     ].filter(Boolean) as string[];
 
 
@@ -1699,6 +1795,82 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                     </Source>
                 )}
 
+                {/* BGP Anomaly arcs — hijack/leak lines between country centroids */}
+                {bgpAnomaliesGeoJSON && (
+                    <Source id="bgp-anomalies" type="geojson" data={bgpAnomaliesGeoJSON as any}>
+                        <Layer
+                            id="bgp-anomalies-layer"
+                            type="line"
+                            paint={{
+                                'line-color': ['get', 'color'],
+                                'line-width': ['interpolate', ['linear'], ['zoom'], 1, 1, 5, 2.5],
+                                'line-opacity': 0.75,
+                                'line-dasharray': [4, 2],
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* CF Traffic Anomaly points */}
+                {cfAnomaliesGeoJSON && (
+                    <Source id="cf-anomalies" type="geojson" data={cfAnomaliesGeoJSON as any}>
+                        <Layer
+                            id="cf-anomalies-pulse"
+                            type="circle"
+                            paint={{
+                                'circle-color': '#ff6600',
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 16, 6, 28, 10, 40],
+                                'circle-opacity': 0.12,
+                                'circle-stroke-width': 0,
+                            }}
+                        />
+                        <Layer
+                            id="cf-anomalies-layer"
+                            type="circle"
+                            paint={{
+                                'circle-color': '#ff6600',
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 5, 6, 8, 10, 12],
+                                'circle-opacity': 0.85,
+                                'circle-stroke-width': 1.5,
+                                'circle-stroke-color': '#ff6600',
+                            }}
+                        />
+                        <Layer
+                            id="cf-anomalies-label"
+                            type="symbol"
+                            minzoom={3}
+                            layout={{
+                                'text-field': ['get', 'location_name'],
+                                'text-font': ['Noto Sans Bold'],
+                                'text-size': 10,
+                                'text-offset': [0, 1.4],
+                                'text-anchor': 'top',
+                                'text-allow-overlap': false,
+                            }}
+                            paint={{
+                                'text-color': '#ff6600',
+                                'text-halo-color': 'rgba(0,0,0,0.9)',
+                                'text-halo-width': 1,
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* Active DDoS arcs — L7 attack origin → target */}
+                {activeDdosGeoJSON && (
+                    <Source id="active-ddos" type="geojson" data={activeDdosGeoJSON as any}>
+                        <Layer
+                            id="active-ddos-layer"
+                            type="line"
+                            paint={{
+                                'line-color': '#cc00ff',
+                                'line-width': ['interpolate', ['linear'], ['zoom'], 1, 1.5, 5, 3],
+                                'line-opacity': 0.7,
+                            }}
+                        />
+                    </Source>
+                )}
+
                 {/* Satellite positions — mission-type icons */}
                 {/* satellites: data pushed imperatively */}
                     <Source id="satellites" type="geojson" data={EMPTY_FC as any}>
@@ -2141,17 +2313,22 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                             maxWidth="240px"
                         >
                             <div className="map-popup bg-[#1a0a0a] border border-red-500/50 text-[#fca5a5] min-w-[180px]">
-                                <div className="map-popup-title text-red-400 border-b border-red-500/20 pb-1">
+                                <div className="map-popup-title text-red-400 border-b border-red-500/20 pb-1" dir="rtl">
                                     {(alert as any).city}
                                 </div>
                                 <div className="map-popup-row">
-                                    Category: <span className="text-white">{(alert as any).category}</span>
+                                    Type: <span className="text-white">{(alert as any).cat_label ?? (alert as any).category ?? (alert as any).cat}</span>
                                 </div>
                                 <div className="map-popup-row">
                                     Time: <span className="text-white">{(alert as any).timestamp}</span>
                                 </div>
-                                <div className="mt-1.5 text-[9px] text-red-600 tracking-wider">
-                                    RED ALERT — PIKUD HAOREF
+                                {(alert as any).area && (
+                                    <div className="map-popup-row">
+                                        Area: <span className="text-white" dir="rtl">{(alert as any).area}</span>
+                                    </div>
+                                )}
+                                <div className="mt-1.5 text-[9px] tracking-wider" style={{ color: (alert as any).color || '#ef4444' }}>
+                                    {(alert as any).is_drill ? 'DRILL' : 'RED ALERT'} — PIKUD HAOREF
                                 </div>
                             </div>
                         </Popup>

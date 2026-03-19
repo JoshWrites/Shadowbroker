@@ -19,7 +19,7 @@ import ErrorBoundary from "@/components/ErrorBoundary";
 import { DashboardDataProvider } from "@/lib/DashboardDataContext";
 import OnboardingModal, { useOnboarding } from "@/components/OnboardingModal";
 import ChangelogModal, { useChangelog } from "@/components/ChangelogModal";
-import type { SelectedEntity, PikudAlert } from "@/types/dashboard";
+import type { SelectedEntity, PikudAlert, BgpAnomaly, CfAnomaly } from "@/types/dashboard";
 import { API_BASE, BACKEND_DIRECT } from "@/lib/api";
 import { NOMINATIM_DEBOUNCE_MS } from "@/lib/constants";
 import { useDataPolling } from "@/hooks/useDataPolling";
@@ -167,6 +167,9 @@ export default function Dashboard() {
     military_bases: false,
     pikud_alerts: true,
     ukraine_alerts: true,
+    bgp_anomalies: false,
+    cf_anomalies: false,
+    active_ddos: false,
   });
 
   // NASA GIBS satellite imagery state
@@ -228,6 +231,56 @@ export default function Dashboard() {
       .catch(e => { if (e.name !== 'AbortError') console.error('[ukraine scrub] fetch error:', e); });
     return () => controller.abort();
   }, [ukraineTimeOffset]);
+
+  // BGP anomalies time scrubber
+  const [bgpTimeOffset, setBgpTimeOffset] = useState<number | null>(null);
+  const [bgpHistoryData, setBgpHistoryData] = useState<BgpAnomaly[]>([]);
+  const [bgpDbRange, setBgpDbRange] = useState<{ earliest: number | null; latest: number | null }>({ earliest: null, latest: null });
+
+  useEffect(() => {
+    fetch(`${BACKEND_DIRECT}/api/bgp-anomalies/range`)
+      .then(r => r.json())
+      .then(d => setBgpDbRange({ earliest: d.earliest ?? null, latest: d.latest ?? null }))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (bgpTimeOffset === null) { setBgpHistoryData([]); return; }
+    const controller = new AbortController();
+    const refSec = Date.now() / 1000 + bgpTimeOffset * 60;
+    const from = refSec - 10800; // 3h window for BGP (events are less frequent)
+    const until = refSec;
+    fetch(`${BACKEND_DIRECT}/api/bgp-anomalies/history?from_ts=${from}&until_ts=${until}`, { signal: controller.signal })
+      .then(r => r.json())
+      .then(d => { setBgpHistoryData(d.events ?? []); })
+      .catch(e => { if (e.name !== 'AbortError') console.error('[bgp scrub] fetch error:', e); });
+    return () => controller.abort();
+  }, [bgpTimeOffset]);
+
+  // CF anomalies time scrubber
+  const [cfTimeOffset, setCfTimeOffset] = useState<number | null>(null);
+  const [cfHistoryData, setCfHistoryData] = useState<CfAnomaly[]>([]);
+  const [cfDbRange, setCfDbRange] = useState<{ earliest: number | null; latest: number | null }>({ earliest: null, latest: null });
+
+  useEffect(() => {
+    fetch(`${BACKEND_DIRECT}/api/cf-anomalies/range`)
+      .then(r => r.json())
+      .then(d => setCfDbRange({ earliest: d.earliest ?? null, latest: d.latest ?? null }))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (cfTimeOffset === null) { setCfHistoryData([]); return; }
+    const controller = new AbortController();
+    const refSec = Date.now() / 1000 + cfTimeOffset * 60;
+    const from = refSec - 10800;
+    const until = refSec;
+    fetch(`${BACKEND_DIRECT}/api/cf-anomalies/history?from_ts=${from}&until_ts=${until}`, { signal: controller.signal })
+      .then(r => r.json())
+      .then(d => { setCfHistoryData(d.events ?? []); })
+      .catch(e => { if (e.name !== 'AbortError') console.error('[cf scrub] fetch error:', e); });
+    return () => controller.abort();
+  }, [cfTimeOffset]);
 
   const [effects, setEffects] = useState({
     bloom: true,
@@ -293,6 +346,10 @@ export default function Dashboard() {
           pikudHistoryData={pikudHistoryData}
           ukraineTimeOffset={ukraineTimeOffset}
           ukraineHistoryData={ukraineHistoryData}
+          bgpTimeOffset={bgpTimeOffset}
+          bgpHistoryData={bgpHistoryData}
+          cfTimeOffset={cfTimeOffset}
+          cfHistoryData={cfHistoryData}
         />
       </ErrorBoundary>
 
@@ -340,7 +397,7 @@ export default function Dashboard() {
           >
             {/* LEFT PANEL - DATA LAYERS */}
             <ErrorBoundary name="WorldviewLeftPanel">
-              <WorldviewLeftPanel data={data} activeLayers={activeLayers} setActiveLayers={setActiveLayers} onSettingsClick={() => setSettingsOpen(true)} onLegendClick={() => setLegendOpen(true)} gibsDate={gibsDate} setGibsDate={setGibsDate} gibsOpacity={gibsOpacity} setGibsOpacity={setGibsOpacity} onEntityClick={setSelectedEntity} onFlyTo={(lat, lng) => setFlyToLocation({ lat, lng, ts: Date.now() })} trackedSdr={trackedSdr} setTrackedSdr={setTrackedSdr} pikudTimeOffset={pikudTimeOffset} setPikudTimeOffset={setPikudTimeOffset} pikudDbRange={pikudDbRange} ukraineTimeOffset={ukraineTimeOffset} setUkraineTimeOffset={setUkraineTimeOffset} ukraineDbRange={ukraineDbRange} />
+              <WorldviewLeftPanel data={data} activeLayers={activeLayers} setActiveLayers={setActiveLayers} onSettingsClick={() => setSettingsOpen(true)} onLegendClick={() => setLegendOpen(true)} gibsDate={gibsDate} setGibsDate={setGibsDate} gibsOpacity={gibsOpacity} setGibsOpacity={setGibsOpacity} onEntityClick={setSelectedEntity} onFlyTo={(lat, lng) => setFlyToLocation({ lat, lng, ts: Date.now() })} trackedSdr={trackedSdr} setTrackedSdr={setTrackedSdr} pikudTimeOffset={pikudTimeOffset} setPikudTimeOffset={setPikudTimeOffset} pikudDbRange={pikudDbRange} ukraineTimeOffset={ukraineTimeOffset} setUkraineTimeOffset={setUkraineTimeOffset} ukraineDbRange={ukraineDbRange} bgpTimeOffset={bgpTimeOffset} setBgpTimeOffset={setBgpTimeOffset} bgpDbRange={bgpDbRange} cfTimeOffset={cfTimeOffset} setCfTimeOffset={setCfTimeOffset} cfDbRange={cfDbRange} />
             </ErrorBoundary>
           </motion.div>
 

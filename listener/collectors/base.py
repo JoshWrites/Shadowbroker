@@ -9,7 +9,7 @@ The base class handles the poll loop, persistence, dedup, and logging.
 import logging
 import time
 import threading
-from db import init_db, insert_events
+from db import init_db, insert_events, insert_pikud_rows
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,11 @@ class BaseCollector:
 
     def __init__(self):
         assert self.signal, "Collector must define signal"
-        init_db(self.signal)
+        if self.signal == "pikud_alerts":
+            from db import init_pikud_db
+            init_pikud_db()
+        else:
+            init_db(self.signal)
         self._stop = threading.Event()
         self._history_thread: threading.Thread | None = None
 
@@ -36,13 +40,19 @@ class BaseCollector:
         """Fetch recent history. Optional — return [] if not supported."""
         return []
 
+    def _insert(self, rows: list[dict]) -> int:
+        """Route inserts to the correct DB layer based on signal type."""
+        if self.signal == "pikud_alerts":
+            return insert_pikud_rows(rows)
+        return insert_events(self.signal, rows)
+
     def _run_live(self):
         logger.info(f"[{self.signal}] Live collector started (every {self.poll_seconds}s)")
         while not self._stop.is_set():
             try:
                 events = self.collect()
                 if events:
-                    n = insert_events(self.signal, events)
+                    n = self._insert(events)
                     if n:
                         logger.info(f"[{self.signal}] +{n} new events ({len(events)} fetched)")
             except Exception as e:
@@ -56,7 +66,7 @@ class BaseCollector:
             try:
                 events = self.collect_history()
                 if events:
-                    n = insert_events(self.signal, events)
+                    n = self._insert(events)
                     if n:
                         logger.info(f"[{self.signal}] history +{n} new events")
             except Exception as e:

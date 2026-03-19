@@ -34,6 +34,10 @@ latest_data = {
     "military_bases": [],
     "pikud_alerts": [],
     "ukraine_alerts": [],
+    "bgp_anomalies": [],
+    "cf_anomalies": [],
+    "active_ddos": [],
+    "internet_quality": {},
 }
 
 # Per-source freshness timestamps

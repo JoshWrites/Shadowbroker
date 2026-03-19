@@ -2,9 +2,12 @@
 
 Polls the Oref live alerts endpoint every 5 seconds.
 Fetches 24h history at startup and every 30 minutes.
-Persists to /data/pikud_alerts.db via the shared DB layer.
+Persists to /data/pikud_alerts.db via the unified pikud_alerts table.
 
 Dedup key: f"{alert_id}-{city}" for live, f"hist-{alertDate}-{city}" for history.
+
+This collector is currently disabled (pikud_ws handles live via WebSocket),
+but kept as a fallback. collect_history() is used by pikud_ws for startup backfill.
 """
 import json
 import logging
@@ -98,23 +101,23 @@ def _resolve_city(city_name: str) -> dict | None:
         return _lamas_data.get(city_name)
 
 
-def _make_event(fid: str, city: str, geo: dict | None, cat: str,
-                timestamp_iso: str, ts: float, extra: dict) -> dict:
-    """Build a normalized event dict for the shared DB layer."""
+def _make_row(fid: str, city: str, geo: dict | None, cat: str,
+              timestamp_iso: str, ts: float, source: str, extra: dict) -> dict:
+    """Build a flat row dict for the unified pikud_alerts table."""
     return {
         "id": fid,
+        "source": source,
         "ts": ts,
+        "timestamp": timestamp_iso,
         "lat": geo["lat"] if geo else None,
         "lng": geo["lng"] if geo else None,
-        "payload": {
-            "city": city,
-            "area": geo.get("area", "") if geo else "",
-            "cat": cat,
-            "cat_label": ALERT_CATEGORIES.get(cat, f"Category {cat}"),
-            "color": ALERT_COLORS.get(cat, "#ff2222"),
-            "timestamp": timestamp_iso,
-            **extra,
-        },
+        "city": city,
+        "area": geo.get("area", "") if geo else "",
+        "msg_type": "ALERT",
+        "cat": cat,
+        "cat_label": ALERT_CATEGORIES.get(cat, f"Category {cat}"),
+        "color": ALERT_COLORS.get(cat, "#ff2222"),
+        **extra,
     }
 
 
@@ -155,17 +158,17 @@ class PikudCollector(BaseCollector):
             now_iso = now.strftime("%Y-%m-%d %H:%M:%S")
             now_ts = now.timestamp()
 
-            events = []
+            rows = []
             for city in cities:
                 geo = _resolve_city(city)
                 if geo is None:
                     continue
                 fid = f"{alert_id}-{city}"
-                events.append(_make_event(
-                    fid, city, geo, cat, now_iso, now_ts,
-                    {"title": data.get("title", ""), "desc": data.get("desc", ""), "active": True}
+                rows.append(_make_row(
+                    fid, city, geo, cat, now_iso, now_ts, "oref_live",
+                    {"title": data.get("title", "")}
                 ))
-            return events
+            return rows
         except Exception as e:
             logger.error(f"[pikud] live fetch error: {e}")
             return []
@@ -186,7 +189,7 @@ class PikudCollector(BaseCollector):
             if not isinstance(history, list):
                 return []
 
-            events = []
+            rows = []
             for entry in history:
                 city = entry.get("data", "")
                 alert_date = entry.get("alertDate", "")
@@ -203,11 +206,13 @@ class PikudCollector(BaseCollector):
                 except (ValueError, TypeError):
                     continue
                 fid = f"hist-{alert_date}-{city}"
-                events.append(_make_event(
-                    fid, city, geo, cat, alert_date, alert_ts,
-                    {"title": entry.get("title", ""), "active": False}
+                rows.append(_make_row(
+                    fid, city, geo, cat, alert_date, alert_ts, "oref_history",
+                    {"title": entry.get("title", ""),
+                     "oref_rid": entry.get("rid"),
+                     "oref_category_desc": entry.get("category_desc")}
                 ))
-            return events
+            return rows
         except Exception as e:
             logger.error(f"[pikud] history fetch error: {e}")
             return []

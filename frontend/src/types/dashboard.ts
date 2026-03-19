@@ -294,13 +294,39 @@ export interface GDELTIncident {
 // ─── PIKUD HAOREF (ISRAEL RED ALERTS) ───────────────────────────────────────
 
 export interface PikudAlert {
+  id: string;
   city: string;
+  area?: string;
   lat: number;
   lng: number;
-  category: string;
+  /** Oref-compatible category string ("1", "2", "5", etc.) */
+  cat: string;
+  /** Human-readable label ("Rockets / Missiles", "Hostile Aircraft Intrusion (UAV)", etc.) */
+  cat_label: string;
+  /** Hex color for this category */
+  color: string;
+  title?: string;
   timestamp: string;
   /** Unix epoch seconds */
   ts: number;
+  /** Raw Tzofar threat ID (0=rockets, 5=UAV, etc.) */
+  threat?: number;
+  /** 1 if drill, 0 if real */
+  is_drill?: number;
+  /** Tzofar notification UUID — groups cities in the same salvo */
+  notification_id?: string;
+  /** "ALERT" or "SYSTEM_MESSAGE" */
+  msg_type?: string;
+  /** True when currently sounding (live ring only) */
+  active?: boolean;
+  /** Data source: "tzofar_ws", "oref_history", "oref_live" */
+  source?: string;
+  /** 1 = early warning flag */
+  instruction?: number;
+  /** 0 = early warning, 1 = incident ended */
+  instruction_type?: number;
+  // Legacy compat — some frontend code reads .category
+  category?: string;
 }
 
 // ─── UKRAINE ALERTS ─────────────────────────────────────────────────────────
@@ -317,6 +343,61 @@ export interface UkraineAlert {
   timestamp: string;
   ts: number;
   active?: boolean;
+}
+
+// ─── CLOUDFLARE RADAR ───────────────────────────────────────────────────────
+
+export interface BgpAnomaly {
+  id: string;
+  type: "hijack" | "leak";
+  ts: number;
+  hijacker_asn: number;
+  hijacker_country: string;
+  hijacker_org: string;
+  hijacker_lat: number;
+  hijacker_lng: number;
+  victim_asn: number;
+  victim_country: string;
+  victim_org: string;
+  victim_lat: number;
+  victim_lng: number;
+  affected_prefixes: string; // JSON-encoded array
+  confidence_score: number;
+  peer_count: number;
+  timestamp: string;
+}
+
+export interface CfAnomaly {
+  id: string;
+  ts: number;
+  location: string;
+  location_name: string;
+  lat: number;
+  lng: number;
+  status: string;
+  description: string;
+  timestamp: string;
+}
+
+export interface DdosAttack {
+  id: string;
+  ts: number;
+  origin_country: string;
+  origin_country_name: string;
+  origin_lat: number;
+  origin_lng: number;
+  target_country: string;
+  target_country_name: string;
+  target_lat: number;
+  target_lng: number;
+  requests_percent: number;
+  layer: string;
+}
+
+export interface InternetQuality {
+  bandwidth_p50?: number;
+  latency_p50?: number;
+  dns_p50?: number;
 }
 
 // ─── LIVEUAMAP ──────────────────────────────────────────────────────────────
@@ -454,6 +535,12 @@ export interface DashboardData {
   // Fast tier (live ring buffer, updated every 5s on backend)
   pikud_alerts?: PikudAlert[];
   ukraine_alerts?: UkraineAlert[];
+
+  // Cloudflare Radar (slow tier)
+  bgp_anomalies?: BgpAnomaly[];
+  cf_anomalies?: CfAnomaly[];
+  active_ddos?: DdosAttack[];
+  internet_quality?: InternetQuality;
 }
 
 // ─── COMPONENT PROPS ────────────────────────────────────────────────────────
@@ -485,6 +572,9 @@ export interface ActiveLayers {
   military_bases: boolean;
   pikud_alerts: boolean;
   ukraine_alerts: boolean;
+  bgp_anomalies: boolean;
+  cf_anomalies: boolean;
+  active_ddos: boolean;
 }
 
 export interface SelectedEntity {
@@ -537,4 +627,10 @@ export interface MaplibreViewerProps {
   // Ukraine time scrubber (null = live mode)
   ukraineTimeOffset?: number | null;
   ukraineHistoryData?: UkraineAlert[];
+  // BGP anomalies time scrubber (null = live mode)
+  bgpTimeOffset?: number | null;
+  bgpHistoryData?: BgpAnomaly[];
+  // CF anomalies time scrubber (null = live mode)
+  cfTimeOffset?: number | null;
+  cfHistoryData?: CfAnomaly[];
 }

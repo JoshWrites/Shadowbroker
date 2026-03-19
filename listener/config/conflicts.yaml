@@ -9,15 +9,22 @@
 conflicts:
 
   pikud_haoref:
+    enabled: false
+    name: "Arab-Israeli / Iran-Israel Conflict (HTTP poll — legacy)"
+    signal: "pikud_alerts"
+    collector: "pikud"
+    description: "Oref HTTP polling — superseded by WebSocket collector"
+    poll_seconds: 5
+    history_poll_minutes: 30
+    notes: "Disabled — pikud_haoref_ws handles live + startup backfill"
+
+  pikud_haoref_ws:
     enabled: true
     name: "Arab-Israeli / Iran-Israel Conflict"
     signal: "pikud_alerts"
-    collector: "pikud"
-    description: "Israel Home Front Command rocket/missile/threat alerts"
-    poll_seconds: 5
-    # History endpoint fetched at startup + every 30 min to catch gaps
-    history_poll_minutes: 30
-    notes: "May require Israeli-IP proxy in some network environments"
+    collector: "pikud_ws"
+    description: "Real-time Tzofar WebSocket push feed with Oref history backfill at startup"
+    notes: "Primary collector — WS for live, Oref history once at boot to fill gaps"
 
   ukraine:
     enabled: true

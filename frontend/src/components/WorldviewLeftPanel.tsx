@@ -44,6 +44,9 @@ const FRESHNESS_MAP: Record<string, string> = {
     datacenters: "datacenters",
     pikud_alerts: "pikud_alerts",
     ukraine_alerts: "ukraine_alerts",
+    bgp_anomalies: "bgp_anomalies",
+    cf_anomalies: "cf_anomalies",
+    active_ddos: "active_ddos",
 };
 
 // POTUS fleet ICAO hex codes for client-side filtering
@@ -63,10 +66,10 @@ const POTUS_ICAOS: Record<string, { label: string; type: string }> = {
     'AE5E77': { label: 'Marine One (VH-92A)', type: 'M1' },
     'AE5E79': { label: 'Marine One (VH-92A)', type: 'M1' },
 };
-import type { DashboardData, ActiveLayers, SelectedEntity, KiwiSDR } from "@/types/dashboard";
+import type { DashboardData, ActiveLayers, SelectedEntity, KiwiSDR, BgpAnomaly, CfAnomaly } from "@/types/dashboard";
 import UkraineDrilldownModal from "@/components/UkraineDrilldownModal";
 
-const WorldviewLeftPanel = React.memo(function WorldviewLeftPanel({ data, activeLayers, setActiveLayers, onSettingsClick, onLegendClick, gibsDate, setGibsDate, gibsOpacity, setGibsOpacity, onEntityClick, onFlyTo, trackedSdr, setTrackedSdr, pikudTimeOffset, setPikudTimeOffset, pikudDbRange, ukraineTimeOffset, setUkraineTimeOffset, ukraineDbRange }: { data: DashboardData; activeLayers: ActiveLayers; setActiveLayers: React.Dispatch<React.SetStateAction<ActiveLayers>>; onSettingsClick?: () => void; onLegendClick?: () => void; gibsDate?: string; setGibsDate?: (d: string) => void; gibsOpacity?: number; setGibsOpacity?: (o: number) => void; onEntityClick?: (entity: SelectedEntity) => void; onFlyTo?: (lat: number, lng: number) => void; trackedSdr?: KiwiSDR | null; setTrackedSdr?: (sdr: KiwiSDR | null) => void; pikudTimeOffset?: number | null; setPikudTimeOffset?: React.Dispatch<React.SetStateAction<number | null>>; pikudDbRange?: { earliest: number | null; latest: number | null }; ukraineTimeOffset?: number | null; setUkraineTimeOffset?: React.Dispatch<React.SetStateAction<number | null>>; ukraineDbRange?: { earliest: number | null; latest: number | null } }) {
+const WorldviewLeftPanel = React.memo(function WorldviewLeftPanel({ data, activeLayers, setActiveLayers, onSettingsClick, onLegendClick, gibsDate, setGibsDate, gibsOpacity, setGibsOpacity, onEntityClick, onFlyTo, trackedSdr, setTrackedSdr, pikudTimeOffset, setPikudTimeOffset, pikudDbRange, ukraineTimeOffset, setUkraineTimeOffset, ukraineDbRange, bgpTimeOffset, setBgpTimeOffset, bgpDbRange, cfTimeOffset, setCfTimeOffset, cfDbRange }: { data: DashboardData; activeLayers: ActiveLayers; setActiveLayers: React.Dispatch<React.SetStateAction<ActiveLayers>>; onSettingsClick?: () => void; onLegendClick?: () => void; gibsDate?: string; setGibsDate?: (d: string) => void; gibsOpacity?: number; setGibsOpacity?: (o: number) => void; onEntityClick?: (entity: SelectedEntity) => void; onFlyTo?: (lat: number, lng: number) => void; trackedSdr?: KiwiSDR | null; setTrackedSdr?: (sdr: KiwiSDR | null) => void; pikudTimeOffset?: number | null; setPikudTimeOffset?: React.Dispatch<React.SetStateAction<number | null>>; pikudDbRange?: { earliest: number | null; latest: number | null }; ukraineTimeOffset?: number | null; setUkraineTimeOffset?: React.Dispatch<React.SetStateAction<number | null>>; ukraineDbRange?: { earliest: number | null; latest: number | null }; bgpTimeOffset?: number | null; setBgpTimeOffset?: React.Dispatch<React.SetStateAction<number | null>>; bgpDbRange?: { earliest: number | null; latest: number | null }; cfTimeOffset?: number | null; setCfTimeOffset?: React.Dispatch<React.SetStateAction<number | null>>; cfDbRange?: { earliest: number | null; latest: number | null } }) {
     const [isMinimized, setIsMinimized] = useState(false);
     const { theme, toggleTheme, hudColor, cycleHudColor } = useTheme();
     const [gibsPlaying, setGibsPlaying] = useState(false);
@@ -74,10 +77,14 @@ const WorldviewLeftPanel = React.memo(function WorldviewLeftPanel({ data, active
     const [pikudDrilldownOpen, setPikudDrilldownOpen] = useState(false);
     const [ukrainePlaying, setUkrainePlaying] = useState(false);
     const [ukraineDrilldownOpen, setUkraineDrilldownOpen] = useState(false);
+    const [bgpPlaying, setBgpPlaying] = useState(false);
+    const [cfPlaying, setCfPlaying] = useState(false);
     const [potusEnabled, setPotusEnabled] = useState(true);
     const gibsIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const pikudIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const ukraineIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const bgpIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const cfIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     // GIBS time slider play/pause animation
     useEffect(() => {
@@ -149,6 +156,48 @@ const WorldviewLeftPanel = React.memo(function WorldviewLeftPanel({ data, active
         return () => { if (ukraineIntervalRef.current) clearInterval(ukraineIntervalRef.current); };
     }, [ukrainePlaying, setUkraineTimeOffset]);
 
+    // BGP anomalies 3d playback
+    useEffect(() => {
+        if (!bgpPlaying || !setBgpTimeOffset) {
+            if (bgpIntervalRef.current) clearInterval(bgpIntervalRef.current);
+            bgpIntervalRef.current = null;
+            return;
+        }
+        if (bgpTimeOffset === null || bgpTimeOffset === 0) {
+            setBgpTimeOffset(-4320); // 3 days
+        }
+        bgpIntervalRef.current = setInterval(() => {
+            setBgpTimeOffset((prev: number | null) => {
+                const current = prev ?? -4320;
+                const next = current + 30;
+                if (next >= 0) { setBgpPlaying(false); return null; }
+                return next;
+            });
+        }, 800);
+        return () => { if (bgpIntervalRef.current) clearInterval(bgpIntervalRef.current); };
+    }, [bgpPlaying, setBgpTimeOffset]);
+
+    // CF anomalies 7d playback
+    useEffect(() => {
+        if (!cfPlaying || !setCfTimeOffset) {
+            if (cfIntervalRef.current) clearInterval(cfIntervalRef.current);
+            cfIntervalRef.current = null;
+            return;
+        }
+        if (cfTimeOffset === null || cfTimeOffset === 0) {
+            setCfTimeOffset(-10080); // 7 days
+        }
+        cfIntervalRef.current = setInterval(() => {
+            setCfTimeOffset((prev: number | null) => {
+                const current = prev ?? -10080;
+                const next = current + 60;
+                if (next >= 0) { setCfPlaying(false); return null; }
+                return next;
+            });
+        }, 800);
+        return () => { if (cfIntervalRef.current) clearInterval(cfIntervalRef.current); };
+    }, [cfPlaying, setCfTimeOffset]);
+
     // Compute ship category counts (memoized — ships array can be 1000+ items)
     const { militaryShipCount, cargoShipCount, passengerShipCount, civilianShipCount, trackedYachtCount } = useMemo(() => {
         const ships = data?.ships;
@@ -206,6 +255,9 @@ const WorldviewLeftPanel = React.memo(function WorldviewLeftPanel({ data, active
         { id: "military_bases", name: "Military Bases", source: "OSINT (Static)", count: data?.military_bases?.length || 0, icon: Shield },
         { id: "pikud_alerts", name: "Israel Red Alerts", source: "Pikud HaOref", count: data?.pikud_alerts?.length || 0, icon: AlertTriangle },
         { id: "ukraine_alerts", name: "Ukraine Air Alerts", source: "alerts.in.ua", count: data?.ukraine_alerts?.length || 0, icon: AlertTriangle },
+        { id: "bgp_anomalies", name: "BGP Anomalies", source: "Cloudflare Radar", count: data?.bgp_anomalies?.length || 0, icon: Wifi },
+        { id: "cf_anomalies", name: "CF Traffic Anomalies", source: "Cloudflare Radar", count: data?.cf_anomalies?.length || 0, icon: Activity },
+        { id: "active_ddos", name: "Active DDoS Arcs", source: "Cloudflare Radar", count: data?.active_ddos?.length || 0, icon: Activity },
         { id: "day_night", name: "Day / Night Cycle", source: "Solar Calc", count: null, icon: Sun },
     ];
 
@@ -569,6 +621,88 @@ const WorldviewLeftPanel = React.memo(function WorldviewLeftPanel({ data, active
                                                     setUkraineTimeOffset={setUkraineTimeOffset}
                                                     ukraineTimeOffset={ukraineTimeOffset ?? null}
                                                 />
+                                            )}
+                                            {active && layer.id === 'bgp_anomalies' && setBgpTimeOffset && (
+                                                <div className="ml-7 mt-2 flex flex-col gap-1.5" onClick={e => e.stopPropagation()}>
+                                                    <div className="flex items-center gap-2">
+                                                        <button
+                                                            onClick={() => setBgpPlaying(p => !p)}
+                                                            className="w-5 h-5 flex items-center justify-center rounded border border-cyan-500/30 text-cyan-400 hover:bg-cyan-950/30 transition-colors"
+                                                        >
+                                                            {bgpPlaying ? <Pause size={10} /> : <Play size={10} />}
+                                                        </button>
+                                                        <input
+                                                            type="range"
+                                                            min={-4320}
+                                                            max={0}
+                                                            step={30}
+                                                            value={bgpTimeOffset ?? 0}
+                                                            onChange={e => {
+                                                                const v = parseInt(e.target.value);
+                                                                setBgpTimeOffset(v === 0 ? null : v);
+                                                            }}
+                                                            className="flex-1 h-1 accent-cyan-500 cursor-pointer"
+                                                        />
+                                                    </div>
+                                                    <div className="flex items-center justify-between">
+                                                        <span className="text-[8px] font-mono text-cyan-400">
+                                                            {bgpTimeOffset === null || bgpTimeOffset === 0
+                                                                ? "LIVE"
+                                                                : (() => {
+                                                                    const mins = Math.abs(bgpTimeOffset ?? 0);
+                                                                    if (mins >= 1440) return `${Math.floor(mins / 1440)}d ${Math.floor((mins % 1440) / 60)}h ago`;
+                                                                    return `${Math.floor(mins / 60)}h ago`;
+                                                                })()}
+                                                        </span>
+                                                        {bgpTimeOffset !== null && bgpTimeOffset !== 0 && (
+                                                            <button
+                                                                className="text-[8px] font-mono text-cyan-500/60 hover:text-cyan-400"
+                                                                onClick={() => { setBgpPlaying(false); setBgpTimeOffset(null); }}
+                                                            >LIVE</button>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            )}
+                                            {active && layer.id === 'cf_anomalies' && setCfTimeOffset && (
+                                                <div className="ml-7 mt-2 flex flex-col gap-1.5" onClick={e => e.stopPropagation()}>
+                                                    <div className="flex items-center gap-2">
+                                                        <button
+                                                            onClick={() => setCfPlaying(p => !p)}
+                                                            className="w-5 h-5 flex items-center justify-center rounded border border-cyan-500/30 text-cyan-400 hover:bg-cyan-950/30 transition-colors"
+                                                        >
+                                                            {cfPlaying ? <Pause size={10} /> : <Play size={10} />}
+                                                        </button>
+                                                        <input
+                                                            type="range"
+                                                            min={-10080}
+                                                            max={0}
+                                                            step={60}
+                                                            value={cfTimeOffset ?? 0}
+                                                            onChange={e => {
+                                                                const v = parseInt(e.target.value);
+                                                                setCfTimeOffset(v === 0 ? null : v);
+                                                            }}
+                                                            className="flex-1 h-1 accent-cyan-500 cursor-pointer"
+                                                        />
+                                                    </div>
+                                                    <div className="flex items-center justify-between">
+                                                        <span className="text-[8px] font-mono text-cyan-400">
+                                                            {cfTimeOffset === null || cfTimeOffset === 0
+                                                                ? "LIVE"
+                                                                : (() => {
+                                                                    const mins = Math.abs(cfTimeOffset ?? 0);
+                                                                    if (mins >= 1440) return `${Math.floor(mins / 1440)}d ${Math.floor((mins % 1440) / 60)}h ago`;
+                                                                    return `${Math.floor(mins / 60)}h ago`;
+                                                                })()}
+                                                        </span>
+                                                        {cfTimeOffset !== null && cfTimeOffset !== 0 && (
+                                                            <button
+                                                                className="text-[8px] font-mono text-cyan-500/60 hover:text-cyan-400"
+                                                                onClick={() => { setCfPlaying(false); setCfTimeOffset(null); }}
+                                                            >LIVE</button>
+                                                        )}
+                                                    </div>
+                                                </div>
                                             )}
                                             {active && layer.id === 'gibs_imagery' && gibsDate && setGibsDate && setGibsOpacity && (
                                                 <div className="ml-7 mt-2 flex flex-col gap-2" onClick={e => e.stopPropagation()}>
