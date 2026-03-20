@@ -52,6 +52,7 @@ from services.fetchers.cloudflare_radar import (  # noqa: F401
     fetch_bgp_anomalies, fetch_cf_anomalies, fetch_active_ddos, fetch_internet_quality,
     init_bgp_db, init_cf_anomalies_db,
 )
+from services.fetchers.trains import fetch_trains  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,7 @@ def update_fast_data():
         fetch_military_flights,
         fetch_ships,
         fetch_satellites,
+        fetch_trains,
     ]
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(fast_funcs)) as executor:
         futures = [executor.submit(func) for func in fast_funcs]
@@ -142,12 +144,22 @@ def start_scheduler():
     # IQI — every 30 minutes
     _scheduler.add_job(fetch_internet_quality, 'interval', minutes=30, id='internet_quality', max_instances=1, misfire_grace_time=120)
 
-    # CCTV pipeline refresh — every 10 minutes
+    # CCTV pipeline refresh
     # Instantiate once and reuse — avoids re-creating DB connections on every tick
     from services.cctv_pipeline import (
         TFLJamCamIngestor, LTASingaporeIngestor,
         AustinTXIngestor, NYCDOTIngestor,
+        GlobalOSMCrawlingIngestor,
+        # Tier 1 — no auth
+        AutobahnIngestor, CaltransCCTVIngestor, DigitalTrafficFIIngestor,
+        HongKongTDIngestor, QuebecMTQIngestor, DGTSpainIngestor, MainRoadsWAIngestor,
+        # Tier 2 — API key required
+        WindyWebcamsIngestor, Alberta511Ingestor, Manitoba511Ingestor,
+        QLDTrafficIngestor, ITrafficSAIngestor, Georgia511Ingestor,
+        OHGOIngestor, Saskatchewan511Ingestor,
     )
+
+    # ── Original live-feed sources (10 min) ──
     _cctv_tfl = TFLJamCamIngestor()
     _cctv_lta = LTASingaporeIngestor()
     _cctv_atx = AustinTXIngestor()
@@ -156,6 +168,37 @@ def start_scheduler():
     _scheduler.add_job(_cctv_lta.ingest, 'interval', minutes=10, id='cctv_lta', max_instances=1, misfire_grace_time=120)
     _scheduler.add_job(_cctv_atx.ingest, 'interval', minutes=10, id='cctv_atx', max_instances=1, misfire_grace_time=120)
     _scheduler.add_job(_cctv_nyc.ingest, 'interval', minutes=10, id='cctv_nyc', max_instances=1, misfire_grace_time=120)
+
+    # ── OSM global (60 min — static data, big query) ──
+    _cctv_osm = GlobalOSMCrawlingIngestor()
+    _scheduler.add_job(_cctv_osm.ingest, 'interval', minutes=60, id='cctv_osm_global', max_instances=1, misfire_grace_time=300)
+
+    # ── Tier 1: no-auth live feeds (10 min) ──
+    _tier1_ingestors = {
+        'cctv_autobahn': AutobahnIngestor(),
+        'cctv_caltrans': CaltransCCTVIngestor(),
+        'cctv_finland': DigitalTrafficFIIngestor(),
+        'cctv_hongkong': HongKongTDIngestor(),
+        'cctv_quebec': QuebecMTQIngestor(),
+        'cctv_spain': DGTSpainIngestor(),
+        'cctv_wa': MainRoadsWAIngestor(),
+        'cctv_sask': Saskatchewan511Ingestor(),
+    }
+    for job_id, ingestor in _tier1_ingestors.items():
+        _scheduler.add_job(ingestor.ingest, 'interval', minutes=10, id=job_id, max_instances=1, misfire_grace_time=120)
+
+    # ── Tier 2: API-key sources (15 min) ──
+    _tier2_ingestors = {
+        'cctv_windy': WindyWebcamsIngestor(),
+        'cctv_alberta': Alberta511Ingestor(),
+        'cctv_manitoba': Manitoba511Ingestor(),
+        'cctv_qld': QLDTrafficIngestor(),
+        'cctv_sa': ITrafficSAIngestor(),
+        'cctv_georgia': Georgia511Ingestor(),
+        'cctv_ohgo': OHGOIngestor(),
+    }
+    for job_id, ingestor in _tier2_ingestors.items():
+        _scheduler.add_job(ingestor.ingest, 'interval', minutes=15, id=job_id, max_instances=1, misfire_grace_time=120)
 
     _scheduler.start()
     logger.info("Scheduler started.")

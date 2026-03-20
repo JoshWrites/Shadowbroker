@@ -169,6 +169,77 @@ async def force_refresh(request: Request):
     t.start()
     return {"status": "refreshing in background"}
 
+# ---------------------------------------------------------------------------
+# CCTV on-demand seed — triggered when user enables the CCTV layer
+# ---------------------------------------------------------------------------
+import concurrent.futures as _cf
+import asyncio
+_cctv_seeding = False
+
+def _run_cctv_ingestors():
+    """Run all CCTV ingestors in parallel (background thread)."""
+    global _cctv_seeding
+    from services.cctv_pipeline import (
+        init_db,
+        TFLJamCamIngestor, LTASingaporeIngestor,
+        AustinTXIngestor, NYCDOTIngestor,
+        GlobalOSMCrawlingIngestor,
+        AutobahnIngestor, CaltransCCTVIngestor, DigitalTrafficFIIngestor,
+        HongKongTDIngestor, QuebecMTQIngestor, DGTSpainIngestor, MainRoadsWAIngestor,
+        WindyWebcamsIngestor, Alberta511Ingestor, Manitoba511Ingestor,
+        QLDTrafficIngestor, ITrafficSAIngestor, Georgia511Ingestor,
+        OHGOIngestor, Saskatchewan511Ingestor,
+    )
+    from services.fetchers.infrastructure import fetch_cctv
+    init_db()
+    ingestors = [
+        TFLJamCamIngestor(), LTASingaporeIngestor(),
+        AustinTXIngestor(), NYCDOTIngestor(),
+        GlobalOSMCrawlingIngestor(),
+        AutobahnIngestor(), CaltransCCTVIngestor(), DigitalTrafficFIIngestor(),
+        HongKongTDIngestor(), QuebecMTQIngestor(), DGTSpainIngestor(), MainRoadsWAIngestor(),
+        WindyWebcamsIngestor(), Alberta511Ingestor(), Manitoba511Ingestor(),
+        QLDTrafficIngestor(), ITrafficSAIngestor(), Georgia511Ingestor(),
+        OHGOIngestor(), Saskatchewan511Ingestor(),
+    ]
+    with _cf.ThreadPoolExecutor(max_workers=len(ingestors)) as ex:
+        _cf.wait([ex.submit(i.ingest) for i in ingestors])
+    fetch_cctv()  # push into latest_data
+    _cctv_seeding = False
+    logger.info("CCTV seed complete.")
+
+@app.get("/api/cctv/seed")
+async def cctv_seed():
+    """Kick off CCTV ingestors, wait for first results, return early."""
+    global _cctv_seeding
+    from services.cctv_pipeline import init_db, get_all_cameras
+    from services.fetchers.infrastructure import fetch_cctv
+
+    init_db()
+    # Return immediately if DB already has cameras
+    cameras = get_all_cameras()
+    if cameras:
+        fetch_cctv()
+        return {"status": "ok", "count": len(cameras), "cameras": cameras}
+
+    # Start background ingestion if not already running
+    if not _cctv_seeding:
+        _cctv_seeding = True
+        threading.Thread(target=_run_cctv_ingestors, daemon=True).start()
+
+    # Poll DB until first cameras arrive (fastest ingestors finish in ~2-5s)
+    for _ in range(15):  # max 30s wait
+        await asyncio.sleep(2)
+        cameras = get_all_cameras()
+        if cameras:
+            fetch_cctv()
+            return {"status": "ok", "count": len(cameras), "cameras": cameras}
+
+    # Timeout — return whatever we have (may still be empty)
+    cameras = get_all_cameras()
+    fetch_cctv()
+    return {"status": "timeout", "count": len(cameras), "cameras": cameras}
+
 @app.post("/api/ais/feed")
 async def ais_feed(request: Request):
     """Accept AIS-catcher HTTP JSON feed (POST decoded AIS messages)."""
@@ -271,6 +342,7 @@ async def live_data_fast(request: Request,
         "gps_jamming": _f(d.get("gps_jamming", [])),
         "satellites": _f(d.get("satellites", [])),
         "satellite_source": d.get("satellite_source", "none"),
+        "trains": _f(d.get("trains", [])),
         "pikud_alerts": _f(d.get("pikud_alerts", [])),      # Live ring buffer — updated every 5s
         "ukraine_alerts": _f(d.get("ukraine_alerts", [])),  # Live ring buffer — updated every 30s
         "freshness": dict(source_timestamps),

@@ -38,6 +38,7 @@ latest_data = {
     "cf_anomalies": [],
     "active_ddos": [],
     "internet_quality": {},
+    "trains": [],
 }
 
 # Per-source freshness timestamps

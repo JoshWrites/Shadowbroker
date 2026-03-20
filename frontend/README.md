@@ -1,6 +1,6 @@
 # ShadowBroker Frontend
 
-Next.js 16 dashboard with MapLibre GL, Cesium, and Framer Motion.
+Next.js 16 dashboard with MapLibre GL and Framer Motion.
 
 ## Development
 
@@ -11,7 +11,13 @@ npm run dev        # http://localhost:3000
 
 ## API URL Configuration
 
-The frontend needs to reach the backend (default port `8000`). Resolution order:
+### Docker (recommended)
+
+The frontend proxies all `/api/*` requests server-side to `BACKEND_URL` (default: `http://backend:8000`). This is a **runtime** variable — no rebuild needed. The browser only talks to port 3000.
+
+### Non-Docker / legacy
+
+Resolution order:
 
 1. **`NEXT_PUBLIC_API_URL`** env var — if set, used as-is (build-time, baked by Next.js)
 2. **Server-side (SSR)** — falls back to `http://localhost:8000`

@@ -477,6 +477,47 @@ export interface Weather {
   host: string;
 }
 
+// ─── TRAINS ─────────────────────────────────────────────────────────────────
+
+export interface TrainStation {
+  name: string;
+  code: string;
+  status: string;
+  sch_arr: string;
+  sch_dep: string;
+  arr: string;
+  dep: string;
+  arr_cmnt: string;
+  dep_cmnt: string;
+  bus: boolean;
+}
+
+export interface Train {
+  id: string;
+  name: string;
+  train_num: string;
+  operator: string;
+  country: string;
+  lat: number;
+  lng: number;
+  heading: number;
+  speed_mph: number;
+  speed_kmh?: number;
+  status: string;
+  train_state?: string;
+  status_msg?: string;
+  origin: string;
+  destination: string;
+  origin_code: string;
+  dest_code: string;
+  last_station: string;
+  next_station: string;
+  service_type: "intercity" | "commuter" | "freight" | "highspeed";
+  route_name?: string;
+  stations?: TrainStation[];
+  updated_at?: string;
+}
+
 // ─── AIRPORTS ───────────────────────────────────────────────────────────────
 
 export interface Airport {
@@ -599,6 +640,7 @@ export interface DashboardData {
   liveuamap?: LiveUAmapIncident[];
   gps_jamming?: GPSJammingZone[];
   satellites?: Satellite[];
+  trains?: Train[];
 
   // Slow tier
   news?: NewsArticle[];
@@ -641,6 +683,8 @@ export interface ActiveLayers {
   ships_civilian: boolean;
   ships_passenger: boolean;
   ships_tracked_yachts: boolean;
+  trains: boolean;
+  railway_map: boolean;
   earthquakes: boolean;
   cctv: boolean;
   ukraine_frontline: boolean;
@@ -725,4 +769,6 @@ export interface MaplibreViewerProps {
   cfHistoryData?: CfAnomaly[];
   // Military base filter: owner country → enabled branches
   milBaseFilter?: Record<string, Set<MilBaseBranch>>;
+  // CCTV on-demand loading indicator
+  cctvLoading?: boolean;
 }

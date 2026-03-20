@@ -2,7 +2,7 @@
 // Extracted from MaplibreViewer to reduce component size and enable unit testing.
 // Each function takes data arrays + optional helpers and returns a GeoJSON FeatureCollection or null.
 
-import type { Earthquake, GPSJammingZone, FireHotspot, InternetOutage, DataCenter, MilitaryBase, MilBaseBranch, GDELTIncident, LiveUAmapIncident, CCTVCamera, KiwiSDR, FrontlineGeoJSON, UAV, Satellite, Ship, ActiveLayers } from "@/types/dashboard";
+import type { Earthquake, GPSJammingZone, FireHotspot, InternetOutage, DataCenter, MilitaryBase, MilBaseBranch, GDELTIncident, LiveUAmapIncident, CCTVCamera, KiwiSDR, FrontlineGeoJSON, UAV, Satellite, Ship, Train, ActiveLayers } from "@/types/dashboard";
 import { classifyAircraft } from "@/utils/aircraftClassification";
 import { MISSION_COLORS, MISSION_ICON_MAP } from "@/components/map/icons/SatelliteIcons";
 
@@ -461,6 +461,43 @@ export function buildShipsGeoJSON(
                 geometry: { type: 'Point', coordinates: [iLng, iLat] }
             };
         }).filter(Boolean) as GeoJSON.Feature[]
+    };
+}
+
+// ─── Trains ────────────────────────────────────────────────────────────────
+
+export function buildTrainsGeoJSON(trains?: Train[], inView?: InViewFilter): FC {
+    if (!trains?.length) return null;
+    return {
+        type: 'FeatureCollection' as const,
+        features: trains.filter(t => t.lat != null && t.lng != null && (!inView || inView(t.lat, t.lng))).map((t, i) => ({
+            type: 'Feature' as const,
+            properties: {
+                id: t.id || i,
+                type: 'train',
+                name: t.name || `Train ${t.train_num}`,
+                train_num: t.train_num || '',
+                operator: t.operator || '',
+                country: t.country || '',
+                speed_mph: t.speed_mph || 0,
+                status: t.status || '',
+                train_state: t.train_state || '',
+                status_msg: t.status_msg || '',
+                origin: t.origin || '',
+                destination: t.destination || '',
+                origin_code: t.origin_code || '',
+                dest_code: t.dest_code || '',
+                last_station: t.last_station || '',
+                next_station: t.next_station || '',
+                service_type: t.service_type || 'intercity',
+                route_name: t.route_name || '',
+                updated_at: t.updated_at || '',
+                rotation: t.heading || 0,
+                // Stations encoded as JSON string (GeoJSON properties must be flat)
+                _stations_json: t.stations ? JSON.stringify(t.stations) : '',
+            },
+            geometry: { type: 'Point' as const, coordinates: [t.lng, t.lat] }
+        }))
     };
 }
 

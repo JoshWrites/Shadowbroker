@@ -24,7 +24,7 @@ import {
     svgTanker, svgRecon, svgPlanePink, svgPlaneAlertRed, svgPlaneDarkBlue,
     svgPlaneWhiteAlert, svgHeliPink, svgHeliAlertRed, svgHeliDarkBlue,
     svgHeliBlue, svgHeliLime, svgHeliWhiteAlert, svgPlaneBlack, svgHeliBlack,
-    svgDrone, svgDataCenter, svgRadioTower, svgShipGray, svgShipRed, svgShipYellow,
+    svgDrone, svgDataCenter, svgRadioTower, svgTrain, svgShipGray, svgShipRed, svgShipYellow,
     svgShipBlue, svgShipWhite, svgShipPink, svgCarrier, svgCctv, svgWarning, svgThreat,
     svgTriangleYellow, svgTriangleRed,
     svgFireYellow, svgFireOrange, svgFireRed, svgFireDarkRed,
@@ -60,13 +60,13 @@ import {
     buildFirmsGeoJSON, buildInternetOutagesGeoJSON, buildDataCentersGeoJSON, buildMilitaryBasesGeoJSON,
     buildGdeltGeoJSON, buildLiveuaGeoJSON, buildFrontlineGeoJSON,
     buildFlightLayerGeoJSON, buildUavGeoJSON,
-    buildSatellitesGeoJSON, buildShipsGeoJSON, buildCarriersGeoJSON,
+    buildSatellitesGeoJSON, buildShipsGeoJSON, buildCarriersGeoJSON, buildTrainsGeoJSON,
     BRANCH_COLORS,
     type FlightLayerConfig,
 } from "@/components/map/geoJSONBuilders";
 import type { MilBaseBranch } from "@/types/dashboard";
 
-const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, selectedEntity, onMouseCoords, onRightClick, regionDossier, regionDossierLoading, onViewStateChange, measureMode, onMeasureClick, measurePoints, gibsDate, gibsOpacity, viewBoundsRef, setTrackedSdr, pikudTimeOffset, pikudHistoryData, ukraineTimeOffset, ukraineHistoryData, bgpTimeOffset, bgpHistoryData, cfTimeOffset, cfHistoryData, milBaseFilter }: MaplibreViewerProps) => {
+const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, selectedEntity, onMouseCoords, onRightClick, regionDossier, regionDossierLoading, onViewStateChange, measureMode, onMeasureClick, measurePoints, gibsDate, gibsOpacity, viewBoundsRef, setTrackedSdr, pikudTimeOffset, pikudHistoryData, ukraineTimeOffset, ukraineHistoryData, bgpTimeOffset, bgpHistoryData, cfTimeOffset, cfHistoryData, milBaseFilter, cctvLoading }: MaplibreViewerProps) => {
     const mapRef = useRef<MapRef>(null);
     const [mapReady, setMapReady] = useState(false);
 
@@ -238,6 +238,10 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
     const kiwisdrGeoJSON = useMemo(() =>
         activeLayers.kiwisdr ? buildKiwisdrGeoJSON(data?.kiwisdr, inView) : null,
         [activeLayers.kiwisdr, data?.kiwisdr, inView]);
+
+    const trainsGeoJSON = useMemo(() =>
+        activeLayers.trains ? buildTrainsGeoJSON(data?.trains, inView) : null,
+        [activeLayers.trains, data?.trains, inView]);
 
     const firmsGeoJSON = useMemo(() =>
         activeLayers.firms ? buildFirmsGeoJSON(data?.firms_fires) : null,
@@ -718,6 +722,7 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
             loadImg('svgBizjetWhite', svgBizjetWhite);
             loadImg('svgDrone', svgDrone);
             loadImg('svgCctv', svgCctv);
+            loadImg('svgTrain', svgTrain);
             loadImg('icon-liveua-yellow', svgTriangleYellow);
             loadImg('icon-liveua-red', svgTriangleRed);
             // FIRMS fire icons
@@ -968,6 +973,7 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
         cctvGeoJSON && 'cctv-layer',
         kiwisdrGeoJSON && 'kiwisdr-clusters',
         kiwisdrGeoJSON && 'kiwisdr-layer',
+        trainsGeoJSON && 'trains-layer',
         internetOutagesGeoJSON && 'internet-outages-layer',
         dataCentersGeoJSON && 'datacenters-layer',
         militaryBasesGeoJSON && 'military-bases-layer',
@@ -1803,6 +1809,87 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                     </Source>
                 )}
 
+                {/* OpenRailwayMap — global railway infrastructure raster overlay */}
+                {activeLayers.railway_map && (
+                    <Source
+                        id="openrailwaymap"
+                        type="raster"
+                        tiles={['https://tiles.openrailwaymap.org/standard/{z}/{x}/{y}.png']}
+                        tileSize={256}
+                        maxzoom={18}
+                        attribution="OpenRailwayMap"
+                    >
+                        <Layer
+                            id="openrailwaymap-layer"
+                            type="raster"
+                            paint={{
+                                'raster-opacity': 0.75,
+                                'raster-fade-duration': 300,
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* Trains — live train position markers with clustering */}
+                {trainsGeoJSON && (
+                    <Source id="trains" type="geojson" data={trainsGeoJSON as any} cluster={true} clusterRadius={40} clusterMaxZoom={10}>
+                        {/* Cluster circles */}
+                        <Layer
+                            id="trains-clusters"
+                            type="circle"
+                            filter={['has', 'point_count']}
+                            paint={{
+                                'circle-radius': ['step', ['get', 'point_count'], 16, 10, 22, 50, 28, 200, 36],
+                                'circle-color': 'rgba(16, 185, 129, 0.15)',
+                                'circle-stroke-width': 1.5,
+                                'circle-stroke-color': 'rgba(16, 185, 129, 0.5)',
+                            }}
+                        />
+                        {/* Cluster count labels */}
+                        <Layer
+                            id="trains-cluster-count"
+                            type="symbol"
+                            filter={['has', 'point_count']}
+                            layout={{
+                                'icon-image': 'svgTrain',
+                                'icon-size': 0.85,
+                                'icon-allow-overlap': true,
+                                'text-field': '{point_count_abbreviated}',
+                                'text-size': 10,
+                                'text-offset': [0, 1.4],
+                                'text-allow-overlap': true,
+                                'text-font': ['Noto Sans Bold'],
+                            }}
+                            paint={{
+                                'text-color': '#10b981',
+                                'text-halo-color': '#000000',
+                                'text-halo-width': 1.5,
+                            }}
+                        />
+                        {/* Individual train icons */}
+                        <Layer
+                            id="trains-layer"
+                            type="symbol"
+                            filter={['!', ['has', 'point_count']]}
+                            layout={{
+                                'icon-image': 'svgTrain',
+                                'icon-size': ['interpolate', ['linear'], ['zoom'], 2, 0.5, 8, 0.8, 14, 1.0],
+                                'icon-allow-overlap': true,
+                                'text-field': ['step', ['zoom'], '', 8, ['get', 'name']],
+                                'text-size': 10,
+                                'text-offset': [0, 1.4],
+                                'text-allow-overlap': false,
+                                'text-font': ['Noto Sans Regular'],
+                            }}
+                            paint={{
+                                'text-color': '#10b981',
+                                'text-halo-color': '#000000',
+                                'text-halo-width': 1,
+                            }}
+                        />
+                    </Source>
+                )}
+
                 {/* Internet Outages — region-level grey markers with % and labels */}
                 {internetOutagesGeoJSON && (
                     <Source id="internet-outages" type="geojson" data={internetOutagesGeoJSON as any}>
@@ -2502,6 +2589,113 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                                         {(ship.yacht_year ?? 0) > 0 && <div>Year: <span className="text-[#888]">{ship.yacht_year}</span></div>}
                                         {ship.yacht_category && <div>Category: <span className="text-[#FF69B4]">{ship.yacht_category}</span></div>}
                                         {ship.yacht_link && <a href={ship.yacht_link} target="_blank" rel="noopener noreferrer" className="text-[#00e5ff] underline">Wikipedia</a>}
+                                    </div>
+                                )}
+                            </div>
+                        </Popup>
+                    );
+                })()}
+
+                {/* Train click popup — route, type, stations, speed */}
+                {selectedEntity?.type === 'train' && (() => {
+                    const train = data?.trains?.find((t: any) => t.id === selectedEntity.id);
+                    if (!train) return null;
+                    // Parse stations from the raw data (not from GeoJSON string)
+                    const stations = train.stations || [];
+                    const statusColor = (train.status || '').toLowerCase().includes('late') ? '#ff6644'
+                        : (train.status || '').toLowerCase().includes('early') ? '#00e5ff'
+                        : '#10b981';
+                    const serviceLabel = train.service_type === 'commuter' ? 'Commuter Rail'
+                        : train.service_type === 'highspeed' ? 'High-Speed Rail'
+                        : train.service_type === 'freight' ? 'Freight'
+                        : 'Intercity Passenger';
+                    return (
+                        <Popup
+                            longitude={train.lng} latitude={train.lat}
+                            closeButton={false} closeOnClick={false}
+                            onClose={() => onEntityClick?.(null)}
+                            anchor="bottom" offset={12}
+                            maxWidth="320px"
+                        >
+                            <div className="map-popup" style={{ borderWidth: 1, borderStyle: 'solid', borderColor: 'rgba(16, 185, 129, 0.5)' }}>
+                                <div className="flex justify-between items-start mb-1">
+                                    <div className="map-popup-title text-[#10b981]">
+                                        {train.name || 'UNKNOWN TRAIN'}
+                                        {train.train_num && <span className="text-[#888] ml-1">#{train.train_num}</span>}
+                                    </div>
+                                    <button onClick={() => onEntityClick?.(null)} className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] ml-2">✕</button>
+                                </div>
+                                <div className="map-popup-row">
+                                    Operator: <span className="text-white">{train.operator}</span>
+                                </div>
+                                <div className="map-popup-row">
+                                    Type: <span className="text-[#10b981]">{serviceLabel}</span>
+                                </div>
+                                {train.route_name && (
+                                    <div className="map-popup-row">
+                                        Route: <span className="text-[#00e5ff]">{train.route_name}</span>
+                                    </div>
+                                )}
+                                <div className="map-popup-row">
+                                    <span className="text-[#888]">{train.origin || train.origin_code}</span>
+                                    <span className="text-[#10b981] mx-1">→</span>
+                                    <span className="text-[#44ff88]">{train.destination || train.dest_code}</span>
+                                </div>
+                                {train.status && (
+                                    <div className="map-popup-row">
+                                        Status: <span style={{ color: statusColor }}>{train.status}</span>
+                                    </div>
+                                )}
+                                {train.status_msg && (
+                                    <div className="map-popup-row text-[9px] text-[#888]">{train.status_msg}</div>
+                                )}
+                                {typeof train.speed_mph === 'number' && train.speed_mph > 0 && (
+                                    <div className="map-popup-row">
+                                        Speed: <span className="text-[#00e5ff]">
+                                            {train.country === 'US'
+                                                ? `${Math.round(train.speed_mph)} mph`
+                                                : `${Math.round(train.speed_kmh || train.speed_mph * 1.60934)} km/h`
+                                            }
+                                        </span>
+                                    </div>
+                                )}
+                                {train.next_station && (
+                                    <div className="map-popup-row">
+                                        Next Stop: <span className="text-[#ffaa00]">{train.next_station}</span>
+                                    </div>
+                                )}
+                                {train.last_station && (
+                                    <div className="map-popup-row">
+                                        Last Station: <span className="text-[#888]">{train.last_station}</span>
+                                    </div>
+                                )}
+                                {/* Station list — compact scrollable route timeline */}
+                                {stations.length > 0 && (
+                                    <div className="mt-1.5 p-[5px_7px] bg-[rgba(16,185,129,0.06)] border border-[rgba(16,185,129,0.25)] rounded text-[9px] tracking-wide">
+                                        <div className="text-[#10b981] font-bold mb-1">ROUTE ({stations.length} stops)</div>
+                                        <div className="max-h-[120px] overflow-y-auto space-y-0.5 pr-1" style={{ scrollbarWidth: 'thin' }}>
+                                            {stations.map((s: any, idx: number) => {
+                                                const isDeparted = s.status === 'Departed';
+                                                const isEnroute = s.status === 'Enroute' || s.status === 'Next';
+                                                const dotColor = isDeparted ? '#888' : isEnroute ? '#ffaa00' : '#10b981';
+                                                const timeStr = s.arr_cmnt || s.dep_cmnt || '';
+                                                return (
+                                                    <div key={idx} className="flex items-center gap-1">
+                                                        <span style={{ color: dotColor }}>●</span>
+                                                        <span className={isDeparted ? 'text-[#666]' : isEnroute ? 'text-[#ffaa00]' : 'text-[#ccc]'}>
+                                                            {s.code ? `${s.name} (${s.code})` : s.name}
+                                                        </span>
+                                                        {timeStr && <span className="text-[#666] ml-auto text-[8px]">{timeStr}</span>}
+                                                        {s.bus && <span className="text-[#ff6644] ml-1" title="Bus connection">🚌</span>}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                )}
+                                {train.country && (
+                                    <div className="map-popup-row mt-1">
+                                        Country: <span className="text-[#888]">{train.country}</span>
                                     </div>
                                 )}
                             </div>
@@ -3355,6 +3549,14 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                 ))}
 
             </Map>
+            {/* CCTV seed loading indicator */}
+            {cctvLoading && (
+                <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-[300] pointer-events-none">
+                    <div className="border border-emerald-500/40 bg-black/85 backdrop-blur-sm px-5 py-2 rounded">
+                        <span className="text-emerald-400 text-[10px] font-mono animate-pulse tracking-widest">COMPILING CCTV MESH...</span>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

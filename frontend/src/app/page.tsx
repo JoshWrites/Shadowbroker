@@ -152,6 +152,8 @@ export default function Dashboard() {
     ships_civilian: false,
     ships_passenger: false,
     ships_tracked_yachts: false,
+    trains: false,
+    railway_map: false,
     earthquakes: false,
     cctv: false,
     ukraine_frontline: false,
@@ -177,6 +179,27 @@ export default function Dashboard() {
     weather_wind: false,
     weather_temperature: false,
   });
+
+  // CCTV on-demand loading — seed cameras when user enables the layer
+  const [cctvLoading, setCctvLoading] = useState(false);
+  const cctvSeeded = useRef(false);
+  useEffect(() => {
+    if (!activeLayers.cctv || cctvSeeded.current) return;
+    if (data?.cctv?.length > 0) { cctvSeeded.current = true; return; }
+    setCctvLoading(true);
+    const controller = new AbortController();
+    fetch(`${API_BASE}/api/cctv/seed`, { signal: controller.signal })
+      .then(r => r.json())
+      .then(d => {
+        if (d.cameras?.length) {
+          data.cctv = d.cameras;
+          cctvSeeded.current = true;
+        }
+        setCctvLoading(false);
+      })
+      .catch(e => { if (e.name !== 'AbortError') { console.error('[cctv seed]', e); setCctvLoading(false); } });
+    return () => controller.abort();
+  }, [activeLayers.cctv, data?.cctv?.length]);
 
   // Military base filter: owner country → enabled branches (built from data on first load)
   const [milBaseFilter, setMilBaseFilter] = useState<Record<string, Set<MilBaseBranch>>>({});
@@ -360,6 +383,7 @@ export default function Dashboard() {
           cfTimeOffset={cfTimeOffset}
           cfHistoryData={cfHistoryData}
           milBaseFilter={milBaseFilter}
+          cctvLoading={cctvLoading}
         />
       </ErrorBoundary>
 
