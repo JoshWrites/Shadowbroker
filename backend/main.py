@@ -358,6 +358,18 @@ async def cf_anomalies_db_range(request: Request):
     """Return the earliest and latest timestamps stored in the CF anomalies SQLite DB."""
     return get_cf_anomalies_db_range()
 
+@app.post("/api/military-bases/geometries")
+async def military_base_geometries(request: Request):
+    """Return polygon geometries for a list of base IDs."""
+    from services.fetchers.infrastructure import get_military_base_geometries
+    body = await request.json()
+    ids = body.get("ids", [])
+    if not ids or not isinstance(ids, list):
+        return {"geometries": {}}
+    # Cap at 50 per request to be reasonable
+    ids = [int(i) for i in ids[:50]]
+    return {"geometries": get_military_base_geometries(ids)}
+
 @app.get("/api/debug-latest")
 async def debug_latest_data(request: Request):
     return list(get_latest_data().keys())

@@ -146,11 +146,44 @@ def fetch_datacenters():
 # ---------------------------------------------------------------------------
 # Military Bases (static JSON — Western Pacific)
 # ---------------------------------------------------------------------------
-_MILITARY_BASES_PATH = Path(__file__).parent.parent.parent / "data" / "military_bases.json"
+_MILITARY_BASES_PATH = Path(__file__).parent.parent.parent / "static_data" / "military_bases.json"
+
+
+_MILITARY_BASES_GEOM_PATH = Path(__file__).parent.parent.parent / "static_data" / "military_bases_geom.json"
+_military_bases_geom: dict = {}  # id (str) -> geometry dict, loaded once
+
+
+def _load_military_bases_geom():
+    global _military_bases_geom
+    if _military_bases_geom:
+        return
+    try:
+        if _MILITARY_BASES_GEOM_PATH.exists():
+            _military_bases_geom = json.loads(_MILITARY_BASES_GEOM_PATH.read_text(encoding="utf-8"))
+            logger.info(f"Military bases geometry: {len(_military_bases_geom)} polygons loaded")
+    except Exception as e:
+        logger.error(f"Error loading military bases geometry: {e}")
+
+
+def get_military_base_geometry(base_id: int) -> dict | None:
+    """Return polygon geometry for a single base by index."""
+    _load_military_bases_geom()
+    return _military_bases_geom.get(str(base_id))
+
+
+def get_military_base_geometries(base_ids: list[int]) -> dict:
+    """Return polygon geometries for multiple bases by index."""
+    _load_military_bases_geom()
+    result = {}
+    for bid in base_ids:
+        geom = _military_bases_geom.get(str(bid))
+        if geom:
+            result[bid] = geom
+    return result
 
 
 def fetch_military_bases():
-    """Load static military base locations (Western Pacific focus)."""
+    """Load static military base locations (NTAD dataset, 795 active/semi-active)."""
     bases = []
     try:
         if not _MILITARY_BASES_PATH.exists():
@@ -167,9 +200,14 @@ def fetch_military_bases():
             bases.append({
                 "name": entry.get("name", "Unknown"),
                 "country": entry.get("country", ""),
+                "state": entry.get("state", ""),
                 "operator": entry.get("operator", ""),
                 "branch": entry.get("branch", ""),
+                "owner": entry.get("owner", ""),
+                "status": entry.get("status", "active"),
+                "joint": entry.get("joint", False),
                 "lat": lat, "lng": lng,
+                "diameter_m": entry.get("diameter_m", 0),
             })
         logger.info(f"Military bases: {len(bases)} locations loaded")
     except Exception as e:

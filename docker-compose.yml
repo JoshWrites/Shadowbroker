@@ -36,6 +36,8 @@ services:
   frontend:
     build:
       context: ./frontend
+      args:
+        - NEXT_PUBLIC_OWM_API_KEY=${NEXT_PUBLIC_OWM_API_KEY:-}
     container_name: shadowbroker-frontend
     ports:
       - "3000:3000"

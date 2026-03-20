@@ -19,7 +19,7 @@ import ErrorBoundary from "@/components/ErrorBoundary";
 import { DashboardDataProvider } from "@/lib/DashboardDataContext";
 import OnboardingModal, { useOnboarding } from "@/components/OnboardingModal";
 import ChangelogModal, { useChangelog } from "@/components/ChangelogModal";
-import type { SelectedEntity, PikudAlert, BgpAnomaly, CfAnomaly } from "@/types/dashboard";
+import type { SelectedEntity, PikudAlert, BgpAnomaly, CfAnomaly, MilBaseBranch } from "@/types/dashboard";
 import { API_BASE, BACKEND_DIRECT } from "@/lib/api";
 import { NOMINATIM_DEBOUNCE_MS } from "@/lib/constants";
 import { useDataPolling } from "@/hooks/useDataPolling";
@@ -141,23 +141,23 @@ export default function Dashboard() {
   const [measurePoints, setMeasurePoints] = useState<{ lat: number; lng: number }[]>([]);
 
   const [activeLayers, setActiveLayers] = useState({
-    flights: true,
-    private: true,
-    jets: true,
-    military: true,
-    tracked: true,
-    satellites: true,
-    ships_military: true,
-    ships_cargo: true,
+    flights: false,
+    private: false,
+    jets: false,
+    military: false,
+    tracked: false,
+    satellites: false,
+    ships_military: false,
+    ships_cargo: false,
     ships_civilian: false,
-    ships_passenger: true,
-    ships_tracked_yachts: true,
-    earthquakes: true,
+    ships_passenger: false,
+    ships_tracked_yachts: false,
+    earthquakes: false,
     cctv: false,
-    ukraine_frontline: true,
-    global_incidents: true,
-    day_night: true,
-    gps_jamming: true,
+    ukraine_frontline: false,
+    global_incidents: false,
+    day_night: false,
+    gps_jamming: false,
     gibs_imagery: false,
     highres_satellite: false,
     kiwisdr: false,
@@ -165,12 +165,21 @@ export default function Dashboard() {
     internet_outages: false,
     datacenters: false,
     military_bases: false,
-    pikud_alerts: true,
-    ukraine_alerts: true,
+    pikud_alerts: false,
+    ukraine_alerts: false,
     bgp_anomalies: false,
     cf_anomalies: false,
     active_ddos: false,
+    weather_radar: false,
+    weather_clouds: false,
+    weather_precipitation: false,
+    weather_pressure: false,
+    weather_wind: false,
+    weather_temperature: false,
   });
+
+  // Military base filter: owner country → enabled branches (built from data on first load)
+  const [milBaseFilter, setMilBaseFilter] = useState<Record<string, Set<MilBaseBranch>>>({});
 
   // NASA GIBS satellite imagery state
   const [gibsDate, setGibsDate] = useState<string>(() => {
@@ -350,6 +359,7 @@ export default function Dashboard() {
           bgpHistoryData={bgpHistoryData}
           cfTimeOffset={cfTimeOffset}
           cfHistoryData={cfHistoryData}
+          milBaseFilter={milBaseFilter}
         />
       </ErrorBoundary>
 
@@ -397,7 +407,7 @@ export default function Dashboard() {
           >
             {/* LEFT PANEL - DATA LAYERS */}
             <ErrorBoundary name="WorldviewLeftPanel">
-              <WorldviewLeftPanel data={data} activeLayers={activeLayers} setActiveLayers={setActiveLayers} onSettingsClick={() => setSettingsOpen(true)} onLegendClick={() => setLegendOpen(true)} gibsDate={gibsDate} setGibsDate={setGibsDate} gibsOpacity={gibsOpacity} setGibsOpacity={setGibsOpacity} onEntityClick={setSelectedEntity} onFlyTo={(lat, lng) => setFlyToLocation({ lat, lng, ts: Date.now() })} trackedSdr={trackedSdr} setTrackedSdr={setTrackedSdr} pikudTimeOffset={pikudTimeOffset} setPikudTimeOffset={setPikudTimeOffset} pikudDbRange={pikudDbRange} ukraineTimeOffset={ukraineTimeOffset} setUkraineTimeOffset={setUkraineTimeOffset} ukraineDbRange={ukraineDbRange} bgpTimeOffset={bgpTimeOffset} setBgpTimeOffset={setBgpTimeOffset} bgpDbRange={bgpDbRange} cfTimeOffset={cfTimeOffset} setCfTimeOffset={setCfTimeOffset} cfDbRange={cfDbRange} />
+              <WorldviewLeftPanel data={data} activeLayers={activeLayers} setActiveLayers={setActiveLayers} onSettingsClick={() => setSettingsOpen(true)} onLegendClick={() => setLegendOpen(true)} gibsDate={gibsDate} setGibsDate={setGibsDate} gibsOpacity={gibsOpacity} setGibsOpacity={setGibsOpacity} onEntityClick={setSelectedEntity} onFlyTo={(lat, lng) => setFlyToLocation({ lat, lng, ts: Date.now() })} trackedSdr={trackedSdr} setTrackedSdr={setTrackedSdr} pikudTimeOffset={pikudTimeOffset} setPikudTimeOffset={setPikudTimeOffset} pikudDbRange={pikudDbRange} ukraineTimeOffset={ukraineTimeOffset} setUkraineTimeOffset={setUkraineTimeOffset} ukraineDbRange={ukraineDbRange} bgpTimeOffset={bgpTimeOffset} setBgpTimeOffset={setBgpTimeOffset} bgpDbRange={bgpDbRange} cfTimeOffset={cfTimeOffset} setCfTimeOffset={setCfTimeOffset} cfDbRange={cfDbRange} milBaseFilter={milBaseFilter} setMilBaseFilter={setMilBaseFilter} />
             </ErrorBoundary>
           </motion.div>
 

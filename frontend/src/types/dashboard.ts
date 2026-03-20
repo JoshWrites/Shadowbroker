@@ -235,11 +235,40 @@ export interface DataCenter {
 export interface MilitaryBase {
   name: string;
   country: string;
+  state?: string;
   operator: string;
   branch: string;
+  owner?: string;
+  status?: string;
+  joint?: boolean;
   lat: number;
   lng: number;
+  diameter_m?: number;
 }
+
+export type MilBaseBranch =
+  | 'air_force' | 'air_force_reserve' | 'air_national_guard'
+  | 'army' | 'army_reserve' | 'army_national_guard'
+  | 'navy' | 'navy_reserve'
+  | 'marines' | 'marines_reserve'
+  | 'joint' | 'missile' | 'nuclear' | 'other';
+
+export const MIL_BASE_BRANCHES: { key: MilBaseBranch; label: string }[] = [
+  { key: 'air_force', label: 'Air Force' },
+  { key: 'air_force_reserve', label: 'AF Reserve' },
+  { key: 'air_national_guard', label: 'Air Nat\'l Guard' },
+  { key: 'army', label: 'Army' },
+  { key: 'army_reserve', label: 'Army Reserve' },
+  { key: 'army_national_guard', label: 'Army Nat\'l Guard' },
+  { key: 'navy', label: 'Navy' },
+  { key: 'navy_reserve', label: 'Navy Reserve' },
+  { key: 'marines', label: 'Marines' },
+  { key: 'marines_reserve', label: 'Marines Reserve' },
+  { key: 'joint', label: 'Joint' },
+  { key: 'missile', label: 'Missile Forces' },
+  { key: 'nuclear', label: 'Nuclear Facility' },
+  { key: 'other', label: 'Other' },
+];
 
 // ─── NEWS / GLOBAL INCIDENTS ────────────────────────────────────────────────
 
@@ -481,6 +510,61 @@ export interface FlightRoute {
 
 // ─── REGION DOSSIER ─────────────────────────────────────────────────────────
 
+export interface OpenMeteoCurrentWeather {
+  temperature_2m: number;
+  relative_humidity_2m: number;
+  apparent_temperature: number;
+  weather_code: number;
+  cloud_cover: number;
+  pressure_msl: number;
+  wind_speed_10m: number;
+  wind_direction_10m: number;
+  wind_gusts_10m: number;
+  precipitation: number;
+  uv_index: number;
+  is_day: number;
+}
+
+export interface OpenMeteoHourly {
+  time: string[];
+  temperature_2m: number[];
+  relative_humidity_2m: number[];
+  dew_point_2m: number[];
+  apparent_temperature: number[];
+  precipitation: number[];
+  rain: number[];
+  showers: number[];
+  snowfall: number[];
+  snow_depth: number[];
+  weather_code: number[];
+  cloud_cover: number[];
+  pressure_msl: number[];
+  wind_speed_10m: number[];
+  wind_direction_10m: number[];
+  wind_gusts_10m: number[];
+  visibility: number[];
+  uv_index: number[];
+}
+
+export interface OpenMeteoDailyData {
+  time: string[];
+  temperature_2m_max: number[];
+  temperature_2m_min: number[];
+  precipitation_sum: number[];
+  wind_speed_10m_max: number[];
+  weather_code: number[];
+  sunrise: string[];
+  sunset: string[];
+}
+
+export interface OpenMeteoWeather {
+  current: OpenMeteoCurrentWeather;
+  hourly: OpenMeteoHourly;
+  daily: OpenMeteoDailyData;
+  timezone: string;
+  utc_offset_seconds: number;
+}
+
 export interface RegionDossier {
   lat: number;
   lng: number;
@@ -575,6 +659,12 @@ export interface ActiveLayers {
   bgp_anomalies: boolean;
   cf_anomalies: boolean;
   active_ddos: boolean;
+  weather_radar: boolean;
+  weather_clouds: boolean;
+  weather_precipitation: boolean;
+  weather_pressure: boolean;
+  weather_wind: boolean;
+  weather_temperature: boolean;
 }
 
 export interface SelectedEntity {
@@ -633,4 +723,6 @@ export interface MaplibreViewerProps {
   // CF anomalies time scrubber (null = live mode)
   cfTimeOffset?: number | null;
   cfHistoryData?: CfAnomaly[];
+  // Military base filter: owner country → enabled branches
+  milBaseFilter?: Record<string, Set<MilBaseBranch>>;
 }

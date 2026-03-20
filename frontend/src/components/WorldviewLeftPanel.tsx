@@ -66,10 +66,26 @@ const POTUS_ICAOS: Record<string, { label: string; type: string }> = {
     'AE5E77': { label: 'Marine One (VH-92A)', type: 'M1' },
     'AE5E79': { label: 'Marine One (VH-92A)', type: 'M1' },
 };
-import type { DashboardData, ActiveLayers, SelectedEntity, KiwiSDR, BgpAnomaly, CfAnomaly } from "@/types/dashboard";
+import type { DashboardData, ActiveLayers, SelectedEntity, KiwiSDR, BgpAnomaly, CfAnomaly, MilBaseBranch } from "@/types/dashboard";
+import { MIL_BASE_BRANCHES } from "@/types/dashboard";
+import { BRANCH_COLORS } from "@/components/map/geoJSONBuilders";
+
+// Derive owner → branches from live data, build default "all on" filter
+function buildMilBaseFilterFromData(bases: any[]): Record<string, Set<MilBaseBranch>> {
+    const result: Record<string, Set<MilBaseBranch>> = {};
+    for (const b of bases) {
+        const owner = b.owner || b.country || 'Unknown';
+        if (!result[owner]) result[owner] = new Set();
+        result[owner].add(b.branch as MilBaseBranch);
+    }
+    return result;
+}
+
+// Preferred display order for owner countries
+const OWNER_ORDER = ['United States', 'China', 'Russia', 'North Korea', 'Taiwan', 'Philippines', 'Australia'];
 import UkraineDrilldownModal from "@/components/UkraineDrilldownModal";
 
-const WorldviewLeftPanel = React.memo(function WorldviewLeftPanel({ data, activeLayers, setActiveLayers, onSettingsClick, onLegendClick, gibsDate, setGibsDate, gibsOpacity, setGibsOpacity, onEntityClick, onFlyTo, trackedSdr, setTrackedSdr, pikudTimeOffset, setPikudTimeOffset, pikudDbRange, ukraineTimeOffset, setUkraineTimeOffset, ukraineDbRange, bgpTimeOffset, setBgpTimeOffset, bgpDbRange, cfTimeOffset, setCfTimeOffset, cfDbRange }: { data: DashboardData; activeLayers: ActiveLayers; setActiveLayers: React.Dispatch<React.SetStateAction<ActiveLayers>>; onSettingsClick?: () => void; onLegendClick?: () => void; gibsDate?: string; setGibsDate?: (d: string) => void; gibsOpacity?: number; setGibsOpacity?: (o: number) => void; onEntityClick?: (entity: SelectedEntity) => void; onFlyTo?: (lat: number, lng: number) => void; trackedSdr?: KiwiSDR | null; setTrackedSdr?: (sdr: KiwiSDR | null) => void; pikudTimeOffset?: number | null; setPikudTimeOffset?: React.Dispatch<React.SetStateAction<number | null>>; pikudDbRange?: { earliest: number | null; latest: number | null }; ukraineTimeOffset?: number | null; setUkraineTimeOffset?: React.Dispatch<React.SetStateAction<number | null>>; ukraineDbRange?: { earliest: number | null; latest: number | null }; bgpTimeOffset?: number | null; setBgpTimeOffset?: React.Dispatch<React.SetStateAction<number | null>>; bgpDbRange?: { earliest: number | null; latest: number | null }; cfTimeOffset?: number | null; setCfTimeOffset?: React.Dispatch<React.SetStateAction<number | null>>; cfDbRange?: { earliest: number | null; latest: number | null } }) {
+const WorldviewLeftPanel = React.memo(function WorldviewLeftPanel({ data, activeLayers, setActiveLayers, onSettingsClick, onLegendClick, gibsDate, setGibsDate, gibsOpacity, setGibsOpacity, onEntityClick, onFlyTo, trackedSdr, setTrackedSdr, pikudTimeOffset, setPikudTimeOffset, pikudDbRange, ukraineTimeOffset, setUkraineTimeOffset, ukraineDbRange, bgpTimeOffset, setBgpTimeOffset, bgpDbRange, cfTimeOffset, setCfTimeOffset, cfDbRange, milBaseFilter, setMilBaseFilter }: { data: DashboardData; activeLayers: ActiveLayers; setActiveLayers: React.Dispatch<React.SetStateAction<ActiveLayers>>; onSettingsClick?: () => void; onLegendClick?: () => void; gibsDate?: string; setGibsDate?: (d: string) => void; gibsOpacity?: number; setGibsOpacity?: (o: number) => void; onEntityClick?: (entity: SelectedEntity) => void; onFlyTo?: (lat: number, lng: number) => void; trackedSdr?: KiwiSDR | null; setTrackedSdr?: (sdr: KiwiSDR | null) => void; pikudTimeOffset?: number | null; setPikudTimeOffset?: React.Dispatch<React.SetStateAction<number | null>>; pikudDbRange?: { earliest: number | null; latest: number | null }; ukraineTimeOffset?: number | null; setUkraineTimeOffset?: React.Dispatch<React.SetStateAction<number | null>>; ukraineDbRange?: { earliest: number | null; latest: number | null }; bgpTimeOffset?: number | null; setBgpTimeOffset?: React.Dispatch<React.SetStateAction<number | null>>; bgpDbRange?: { earliest: number | null; latest: number | null }; cfTimeOffset?: number | null; setCfTimeOffset?: React.Dispatch<React.SetStateAction<number | null>>; cfDbRange?: { earliest: number | null; latest: number | null }; milBaseFilter?: Record<string, Set<MilBaseBranch>>; setMilBaseFilter?: React.Dispatch<React.SetStateAction<Record<string, Set<MilBaseBranch>>>> }) {
     const [isMinimized, setIsMinimized] = useState(false);
     const { theme, toggleTheme, hudColor, cycleHudColor } = useTheme();
     const [gibsPlaying, setGibsPlaying] = useState(false);
@@ -252,13 +268,19 @@ const WorldviewLeftPanel = React.memo(function WorldviewLeftPanel({ data, active
         { id: "firms", name: "Fire Hotspots (24h)", source: "NASA FIRMS VIIRS", count: data?.firms_fires?.length || 0, icon: Flame },
         { id: "internet_outages", name: "Internet Outages", source: "IODA / Georgia Tech", count: data?.internet_outages?.length || 0, icon: Wifi },
         { id: "datacenters", name: "Data Centers", source: "DC Map (GitHub)", count: data?.datacenters?.length || 0, icon: Server },
-        { id: "military_bases", name: "Military Bases", source: "OSINT (Static)", count: data?.military_bases?.length || 0, icon: Shield },
+        { id: "military_bases", name: "Military Bases", source: "NTAD + OSINT", count: data?.military_bases?.length || 0, icon: Shield },
         { id: "pikud_alerts", name: "Israel Red Alerts", source: "Pikud HaOref", count: data?.pikud_alerts?.length || 0, icon: AlertTriangle },
         { id: "ukraine_alerts", name: "Ukraine Air Alerts", source: "alerts.in.ua", count: data?.ukraine_alerts?.length || 0, icon: AlertTriangle },
         { id: "bgp_anomalies", name: "BGP Anomalies", source: "Cloudflare Radar", count: data?.bgp_anomalies?.length || 0, icon: Wifi },
         { id: "cf_anomalies", name: "CF Traffic Anomalies", source: "Cloudflare Radar", count: data?.cf_anomalies?.length || 0, icon: Activity },
         { id: "active_ddos", name: "Active DDoS Arcs", source: "Cloudflare Radar", count: data?.active_ddos?.length || 0, icon: Activity },
         { id: "day_night", name: "Day / Night Cycle", source: "Solar Calc", count: null, icon: Sun },
+        { id: "weather_radar", name: "Weather Radar", source: "RainViewer", count: null, icon: Globe },
+        { id: "weather_clouds", name: "Cloud Cover Map", source: "OpenWeatherMap", count: null, icon: Globe },
+        { id: "weather_precipitation", name: "Precipitation Map", source: "OpenWeatherMap", count: null, icon: Globe },
+        { id: "weather_pressure", name: "Pressure Map", source: "OpenWeatherMap", count: null, icon: Globe },
+        { id: "weather_wind", name: "Wind Map", source: "OpenWeatherMap", count: null, icon: Globe },
+        { id: "weather_temperature", name: "Temperature Map", source: "OpenWeatherMap", count: null, icon: Globe },
     ];
 
     const shipIcon = <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M2 21c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1 .6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1" /><path d="M19.38 20A11.6 11.6 0 0 0 21 14l-9-4-9 4c0 2.9.94 5.34 2.81 7.76" /><path d="M19 13V7a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v6" /></svg>;
@@ -499,6 +521,89 @@ const WorldviewLeftPanel = React.memo(function WorldviewLeftPanel({ data, active
                                                     </div>
                                                 </div>
                                             </div>
+                                            {/* Military Bases filter: Country → Branch */}
+                                            {active && layer.id === 'military_bases' && setMilBaseFilter && (() => {
+                                                // Build default filter from data if empty
+                                                const allFromData = buildMilBaseFilterFromData(data?.military_bases || []);
+                                                const filter = milBaseFilter && Object.keys(milBaseFilter).length > 0
+                                                    ? milBaseFilter : allFromData;
+                                                // Auto-initialize filter on first render
+                                                if ((!milBaseFilter || Object.keys(milBaseFilter).length === 0) && Object.keys(allFromData).length > 0) {
+                                                    setTimeout(() => setMilBaseFilter(allFromData), 0);
+                                                }
+                                                const owners = OWNER_ORDER.filter(o => allFromData[o]);
+                                                // Add any owners not in the preferred order
+                                                for (const o of Object.keys(allFromData)) {
+                                                    if (!owners.includes(o)) owners.push(o);
+                                                }
+                                                return (
+                                                    <div className="ml-7 mt-2 flex flex-col gap-0.5 max-h-[260px] overflow-y-auto" onClick={e => e.stopPropagation()}>
+                                                        <div className="flex items-center justify-between mb-1">
+                                                            <span className="text-[8px] text-[var(--text-muted)] font-mono tracking-wider">FILTER</span>
+                                                            <div className="flex gap-2">
+                                                                <button onClick={() => setMilBaseFilter(allFromData)}
+                                                                    className="text-[7px] font-mono text-cyan-400/70 hover:text-cyan-400">ALL</button>
+                                                                <button onClick={() => setMilBaseFilter({})}
+                                                                    className="text-[7px] font-mono text-cyan-400/70 hover:text-cyan-400">NONE</button>
+                                                            </div>
+                                                        </div>
+                                                        {owners.map(owner => {
+                                                            const ownerBranches = Array.from(allFromData[owner] || []);
+                                                            const enabledSet = filter[owner];
+                                                            const allOn = enabledSet && ownerBranches.every(b => enabledSet.has(b));
+                                                            const someOn = enabledSet && enabledSet.size > 0;
+                                                            return (
+                                                                <div key={owner} className="mb-1">
+                                                                    <button
+                                                                        onClick={() => {
+                                                                            setMilBaseFilter(prev => {
+                                                                                const next = { ...prev };
+                                                                                if (allOn) {
+                                                                                    delete next[owner];
+                                                                                } else {
+                                                                                    next[owner] = new Set(ownerBranches as MilBaseBranch[]);
+                                                                                }
+                                                                                return next;
+                                                                            });
+                                                                        }}
+                                                                        className={`flex items-center gap-1.5 w-full text-left text-[9px] font-mono font-bold tracking-wider transition-colors ${allOn ? 'text-cyan-400' : someOn ? 'text-cyan-400/60' : 'text-[var(--text-muted)]/40'}`}
+                                                                    >
+                                                                        <span className="text-[7px]">{allOn ? '▾' : '▸'}</span>
+                                                                        {owner.toUpperCase()}
+                                                                        <span className="text-[7px] text-[var(--text-muted)] font-normal ml-auto">{enabledSet ? enabledSet.size : 0}/{ownerBranches.length}</span>
+                                                                    </button>
+                                                                    {someOn && ownerBranches.map(branchKey => {
+                                                                        const branchInfo = MIL_BASE_BRANCHES.find(b => b.key === branchKey);
+                                                                        const label = branchInfo?.label || branchKey;
+                                                                        const on = enabledSet?.has(branchKey as MilBaseBranch);
+                                                                        const color = BRANCH_COLORS[branchKey] || '#9ca3af';
+                                                                        return (
+                                                                            <button
+                                                                                key={branchKey}
+                                                                                onClick={() => {
+                                                                                    setMilBaseFilter(prev => {
+                                                                                        const next = { ...prev };
+                                                                                        const s = new Set(next[owner] || []);
+                                                                                        if (s.has(branchKey as MilBaseBranch)) s.delete(branchKey as MilBaseBranch);
+                                                                                        else s.add(branchKey as MilBaseBranch);
+                                                                                        if (s.size === 0) delete next[owner];
+                                                                                        else next[owner] = s;
+                                                                                        return next;
+                                                                                    });
+                                                                                }}
+                                                                                className={`flex items-center gap-2 pl-4 py-0.5 text-[8px] font-mono transition-colors ${on ? 'opacity-100' : 'opacity-30'}`}
+                                                                            >
+                                                                                <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
+                                                                                <span style={{ color: on ? color : undefined }}>{label}</span>
+                                                                            </button>
+                                                                        );
+                                                                    })}
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                );
+                                            })()}
                                             {/* GIBS Imagery inline controls: time slider + play/pause + opacity */}
                                             {active && layer.id === 'pikud_alerts' && setPikudTimeOffset && (
                                                 <div className="ml-7 mt-2 flex flex-col gap-1" onClick={e => e.stopPropagation()}>

@@ -46,6 +46,7 @@ import {
 import { classifyAircraft } from "@/utils/aircraftClassification";
 import { makeSatSvg, MISSION_COLORS, MISSION_ICON_MAP } from "@/components/map/icons/SatelliteIcons";
 import { EMPTY_FC } from "@/components/map/mapConstants";
+
 import { useImperativeSource } from "@/components/map/hooks/useImperativeSource";
 import { ClusterCountLabels, TrackedFlightLabels, CarrierLabels, TrackedYachtLabels, UavLabels, EarthquakeLabels, ThreatMarkers } from "@/components/map/MapMarkers";
 import type { MaplibreViewerProps } from "@/types/dashboard";
@@ -53,18 +54,41 @@ import { INTERP_TICK_MS, ALERT_BOX_WIDTH_PX, ALERT_MAX_OFFSET_PX } from "@/lib/c
 import { useInterpolation } from "@/components/map/hooks/useInterpolation";
 import { useClusterLabels } from "@/components/map/hooks/useClusterLabels";
 import { spreadAlertItems } from "@/utils/alertSpread";
+import WeatherModal from "@/components/WeatherModal";
 import {
     buildEarthquakesGeoJSON, buildJammingGeoJSON, buildCctvGeoJSON, buildKiwisdrGeoJSON,
     buildFirmsGeoJSON, buildInternetOutagesGeoJSON, buildDataCentersGeoJSON, buildMilitaryBasesGeoJSON,
     buildGdeltGeoJSON, buildLiveuaGeoJSON, buildFrontlineGeoJSON,
     buildFlightLayerGeoJSON, buildUavGeoJSON,
     buildSatellitesGeoJSON, buildShipsGeoJSON, buildCarriersGeoJSON,
+    BRANCH_COLORS,
     type FlightLayerConfig,
 } from "@/components/map/geoJSONBuilders";
+import type { MilBaseBranch } from "@/types/dashboard";
 
-const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, selectedEntity, onMouseCoords, onRightClick, regionDossier, regionDossierLoading, onViewStateChange, measureMode, onMeasureClick, measurePoints, gibsDate, gibsOpacity, viewBoundsRef, setTrackedSdr, pikudTimeOffset, pikudHistoryData, ukraineTimeOffset, ukraineHistoryData, bgpTimeOffset, bgpHistoryData, cfTimeOffset, cfHistoryData }: MaplibreViewerProps) => {
+const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, selectedEntity, onMouseCoords, onRightClick, regionDossier, regionDossierLoading, onViewStateChange, measureMode, onMeasureClick, measurePoints, gibsDate, gibsOpacity, viewBoundsRef, setTrackedSdr, pikudTimeOffset, pikudHistoryData, ukraineTimeOffset, ukraineHistoryData, bgpTimeOffset, bgpHistoryData, cfTimeOffset, cfHistoryData, milBaseFilter }: MaplibreViewerProps) => {
     const mapRef = useRef<MapRef>(null);
     const [mapReady, setMapReady] = useState(false);
+
+    // RainViewer radar: fetch latest timestamp for tile URL
+    const [radarTimestamp, setRadarTimestamp] = useState<string | null>(null);
+    useEffect(() => {
+        if (!activeLayers.weather_radar) { setRadarTimestamp(null); return; }
+        let cancelled = false;
+        const fetchTs = () => {
+            fetch('https://api.rainviewer.com/public/weather-maps.json')
+                .then(r => r.json())
+                .then(d => {
+                    if (cancelled) return;
+                    const past = d?.radar?.past;
+                    if (past?.length) setRadarTimestamp(past[past.length - 1].path);
+                })
+                .catch(() => {});
+        };
+        fetchTs();
+        const iv = setInterval(fetchTs, 300000); // refresh every 5 min
+        return () => { cancelled = true; clearInterval(iv); };
+    }, [activeLayers.weather_radar]);
     const { theme } = useTheme();
     const mapThemeStyle = useMemo(() => theme === 'light' ? lightStyle : darkStyle, [theme]);
 
@@ -227,9 +251,111 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
         activeLayers.datacenters ? buildDataCentersGeoJSON(data?.datacenters) : null,
         [activeLayers.datacenters, data?.datacenters]);
 
+    // --- Military base polygon LOD: show outlines when base ≥ 50px on screen ---
+    const PX_THRESHOLD = 50;
+    const milBasePolygonsRef = useRef<Record<number, any>>({}); // idx -> geometry
+    const milBasePendingRef = useRef<Record<number, boolean>>({});
+    const [milBasePolyVersion, setMilBasePolyVersion] = useState(0); // trigger re-render
+    const [dossierModal, setDossierModal] = useState<'sentinel' | 'weather' | null>(null);
+    // Reset modal choice when entity changes
+    useEffect(() => { if (selectedEntity?.type !== 'region_dossier') setDossierModal(null); }, [selectedEntity]);
+
+    // Compute which bases have active polygon rendering (used to hide their points)
+    const milBasePolyActiveRef = useRef<Record<number, boolean>>({});
+
+    // Compute polygon GeoJSON first so we know which indices are polygon-rendered
+    const milBasePolygonGeoJSON = useMemo(() => {
+        const active: Record<number, boolean> = {};
+        if (!activeLayers.military_bases || !data?.military_bases?.length) {
+            milBasePolyActiveRef.current = active;
+            return null;
+        }
+        const map = mapRef.current?.getMap();
+        if (!map) { milBasePolyActiveRef.current = active; return null; }
+        const zoom = viewState.zoom;
+        const mPerPx = 40075016.686 / (512 * Math.pow(2, zoom));
+
+        const needIds: number[] = [];
+        const features: any[] = [];
+        const polys = milBasePolygonsRef.current;
+
+        for (let i = 0; i < data.military_bases.length; i++) {
+            const base = data.military_bases[i];
+            if (milBaseFilter && Object.keys(milBaseFilter).length > 0) {
+                const owner = base.owner || base.country || '';
+                const ownerSet = milBaseFilter[owner];
+                if (!ownerSet || !ownerSet.has(base.branch as MilBaseBranch)) continue;
+            }
+            const diam = base.diameter_m || 0;
+            const screenPx = diam / mPerPx;
+
+            if (screenPx >= PX_THRESHOLD) {
+                if (!inView(base.lat, base.lng)) {
+                    delete polys[i];
+                    continue;
+                }
+                if (polys[i]) {
+                    active[i] = true;
+                    const color = BRANCH_COLORS[base.branch] || '#9ca3af';
+                    features.push({
+                        type: 'Feature',
+                        geometry: polys[i],
+                        properties: {
+                            id: `milbase-${i}`,
+                            type: 'military_base',
+                            name: base.name || 'Unknown',
+                            branch: base.branch,
+                            color,
+                        },
+                    });
+                } else {
+                    needIds.push(i);
+                }
+            } else {
+                delete polys[i];
+            }
+        }
+
+        // Fetch missing polygons
+        if (needIds.length > 0) {
+            const pending = milBasePendingRef.current;
+            const toFetch = needIds.filter(id => !pending[id]);
+            if (toFetch.length > 0) {
+                toFetch.forEach(id => { pending[id] = true; });
+                fetch(`${API_BASE}/api/military-bases/geometries`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids: toFetch }),
+                })
+                    .then(r => r.json())
+                    .then(d => {
+                        const geoms = d.geometries || {};
+                        for (const [idStr, geom] of Object.entries(geoms)) {
+                            const id = parseInt(idStr);
+                            milBasePolygonsRef.current[id] = geom;
+                            delete milBasePendingRef.current[id];
+                        }
+                        setMilBasePolyVersion(v => v + 1);
+                    })
+                    .catch(() => {
+                        toFetch.forEach(id => { delete pending[id]; });
+                    });
+            }
+        }
+
+        milBasePolyActiveRef.current = active;
+        if (!features.length) return null;
+        return { type: 'FeatureCollection', features };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeLayers.military_bases, data?.military_bases, milBaseFilter, viewState.zoom, mapBounds, milBasePolyVersion]);
+
+    // Build point GeoJSON, excluding bases that have active polygon rendering
     const militaryBasesGeoJSON = useMemo(() =>
-        activeLayers.military_bases ? buildMilitaryBasesGeoJSON(data?.military_bases) : null,
-        [activeLayers.military_bases, data?.military_bases]);
+        activeLayers.military_bases
+            ? buildMilitaryBasesGeoJSON(data?.military_bases, milBaseFilter, milBasePolyActiveRef.current)
+            : null,
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [activeLayers.military_bases, data?.military_bases, milBaseFilter, milBasePolygonGeoJSON]);
 
     // Pikud HaOref: age buckets match Israeli shelter doctrine (10 min shelter window).
     // In live mode: age is relative to now.
@@ -332,11 +458,15 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                 },
                 properties: {
                     id: ev.id,
-                    type: ev.type,
+                    type: "bgp_anomaly",
+                    bgp_type: ev.type,
                     hijacker_country: ev.hijacker_country,
                     hijacker_org: ev.hijacker_org,
+                    hijacker_asn: ev.hijacker_asn,
                     victim_country: ev.victim_country,
                     victim_org: ev.victim_org,
+                    victim_asn: ev.victim_asn,
+                    affected_prefixes: ev.affected_prefixes,
                     confidence_score: ev.confidence_score,
                     peer_count: ev.peer_count,
                     timestamp: ev.timestamp,
@@ -365,6 +495,7 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                 geometry: { type: "Point" as const, coordinates: [ev.lng, ev.lat] },
                 properties: {
                     id: ev.id,
+                    type: "cf_anomaly",
                     location: ev.location,
                     location_name: ev.location_name,
                     status: ev.status,
@@ -378,29 +509,92 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
         return { type: "FeatureCollection" as const, features };
     }, [activeLayers.cf_anomalies, data?.cf_anomalies, cfTimeOffset, cfHistoryData]);
 
-    // Active DDoS arcs — L7 top attack pairs
+    // Active DDoS lines — L7 top attack pairs (straight lines with directional pulse)
+    const PULSE_STEPS = 48;
+    const ddosArcsRef = useRef<{ coords: [number, number][]; props: Record<string, any> }[]>([]);
     const activeDdosGeoJSON = useMemo(() => {
-        if (!activeLayers.active_ddos) return null;
+        if (!activeLayers.active_ddos) { ddosArcsRef.current = []; return null; }
         const attacks = data?.active_ddos ?? [];
-        if (!attacks.length) return null;
-        const features = attacks.map((a: any) => ({
-            type: "Feature" as const,
-            geometry: {
-                type: "LineString" as const,
-                coordinates: [[a.origin_lng, a.origin_lat], [a.target_lng, a.target_lat]],
-            },
-            properties: {
+        if (!attacks.length) { ddosArcsRef.current = []; return null; }
+        const arcsForPulse: { coords: [number, number][]; props: Record<string, any> }[] = [];
+        const features = attacks.map((a: any) => {
+            const from: [number, number] = [a.origin_lng, a.origin_lat];
+            const to: [number, number] = [a.target_lng, a.target_lat];
+            // Interpolate N points along the straight line for the pulse segment
+            const coords: [number, number][] = [];
+            for (let i = 0; i <= PULSE_STEPS; i++) {
+                const t = i / PULSE_STEPS;
+                coords.push([from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t]);
+            }
+            const props = {
                 id: a.id,
+                type: "active_ddos",
                 origin_country: a.origin_country,
                 origin_country_name: a.origin_country_name,
                 target_country: a.target_country,
                 target_country_name: a.target_country_name,
                 requests_percent: a.requests_percent,
                 layer: a.layer,
-            },
-        }));
+            };
+            arcsForPulse.push({ coords, props });
+            return {
+                type: "Feature" as const,
+                geometry: { type: "LineString" as const, coordinates: [from, to] },
+                properties: props,
+            };
+        });
+        ddosArcsRef.current = arcsForPulse;
         return { type: "FeatureCollection" as const, features };
     }, [activeLayers.active_ddos, data?.active_ddos]);
+
+    // DDoS directional pulse — a short bright segment sliding source→target along each line
+    const PULSE_LEN = 6; // segment length in interpolation steps
+    const ddosPulseAnimRef = useRef<number>(0);
+    const ddosPulsePhaseRef = useRef<number>(0);
+
+    useEffect(() => {
+        if (!activeDdosGeoJSON || !ddosArcsRef.current.length) {
+            if (ddosPulseAnimRef.current) cancelAnimationFrame(ddosPulseAnimRef.current);
+            return;
+        }
+
+        let lastTime = 0;
+        const speed = 0.03; // phase increment per ms (~2.2 sec full cycle)
+
+        const tick = (time: number) => {
+            const dt = lastTime ? time - lastTime : 16;
+            lastTime = time;
+            ddosPulsePhaseRef.current = (ddosPulsePhaseRef.current + speed * dt / 16) % (PULSE_STEPS + PULSE_LEN);
+
+            const phase = ddosPulsePhaseRef.current;
+            const features = ddosArcsRef.current.map((arc) => {
+                const start = Math.max(0, Math.floor(phase - PULSE_LEN));
+                const end = Math.min(arc.coords.length - 1, Math.floor(phase));
+                if (end <= start) return null;
+                return {
+                    type: "Feature" as const,
+                    geometry: {
+                        type: "LineString" as const,
+                        coordinates: arc.coords.slice(start, end + 1),
+                    },
+                    properties: arc.props,
+                };
+            }).filter(Boolean);
+
+            const fc = { type: "FeatureCollection" as const, features };
+
+            const map = mapRef.current?.getMap();
+            const src = map?.getSource("active-ddos-pulse") as any;
+            if (src?.setData) {
+                src.setData(fc);
+            }
+
+            ddosPulseAnimRef.current = requestAnimationFrame(tick);
+        };
+
+        ddosPulseAnimRef.current = requestAnimationFrame(tick);
+        return () => { if (ddosPulseAnimRef.current) cancelAnimationFrame(ddosPulseAnimRef.current); };
+    }, [activeDdosGeoJSON]);
 
     // Load Images into the Map Style once loaded
     const onMapLoad = useCallback((e: any) => {
@@ -777,12 +971,14 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
         internetOutagesGeoJSON && 'internet-outages-layer',
         dataCentersGeoJSON && 'datacenters-layer',
         militaryBasesGeoJSON && 'military-bases-layer',
+        milBasePolygonGeoJSON && 'military-bases-poly-fill',
         firmsGeoJSON && 'firms-viirs-layer',
         pikudAlertsGeoJSON && 'pikud-alerts-layer',
         ukraineAlertsGeoJSON && 'ukraine-alerts-layer',
         bgpAnomaliesGeoJSON && 'bgp-anomalies-layer',
         cfAnomaliesGeoJSON && 'cf-anomalies-layer',
         activeDdosGeoJSON && 'active-ddos-layer',
+        activeDdosGeoJSON && 'active-ddos-pulse-layer',
     ].filter(Boolean) as string[];
 
 
@@ -856,7 +1052,7 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                             type: props.type,
                             name: props.name,
                             media_url: props.media_url,
-                            extra: props
+                            extra: { ...props, _clickLng: e.lngLat.lng, _clickLat: e.lngLat.lat }
                         });
                     } else {
                         onEntityClick?.(null);
@@ -923,6 +1119,75 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                                 'raster-fade-duration': 0
                             }}
                         />
+                    </Source>
+                )}
+
+                {/* RainViewer Weather Radar — global precipitation radar */}
+                {activeLayers.weather_radar && radarTimestamp && (
+                    <Source
+                        key={`rainviewer-${radarTimestamp}`}
+                        id="rainviewer-radar"
+                        type="raster"
+                        tiles={[`https://tilecache.rainviewer.com${radarTimestamp}/256/{z}/{x}/{y}/6/1_1.png`]}
+                        tileSize={256}
+                    >
+                        <Layer
+                            id="rainviewer-radar-layer"
+                            type="raster"
+                            paint={{ 'raster-opacity': 0.7, 'raster-fade-duration': 0 }}
+                        />
+                    </Source>
+                )}
+
+                {/* OpenWeatherMap tile layers */}
+                {activeLayers.weather_clouds && process.env.NEXT_PUBLIC_OWM_API_KEY && (
+                    <Source
+                        id="owm-clouds"
+                        type="raster"
+                        tiles={[`https://tile.openweathermap.org/map/clouds_new/{z}/{x}/{y}.png?appid=${process.env.NEXT_PUBLIC_OWM_API_KEY}`]}
+                        tileSize={256}
+                    >
+                        <Layer id="owm-clouds-layer" type="raster" paint={{ 'raster-opacity': 0.6, 'raster-fade-duration': 0 }} />
+                    </Source>
+                )}
+                {activeLayers.weather_precipitation && process.env.NEXT_PUBLIC_OWM_API_KEY && (
+                    <Source
+                        id="owm-precipitation"
+                        type="raster"
+                        tiles={[`https://tile.openweathermap.org/map/precipitation_new/{z}/{x}/{y}.png?appid=${process.env.NEXT_PUBLIC_OWM_API_KEY}`]}
+                        tileSize={256}
+                    >
+                        <Layer id="owm-precipitation-layer" type="raster" paint={{ 'raster-opacity': 0.7, 'raster-fade-duration': 0 }} />
+                    </Source>
+                )}
+                {activeLayers.weather_pressure && process.env.NEXT_PUBLIC_OWM_API_KEY && (
+                    <Source
+                        id="owm-pressure"
+                        type="raster"
+                        tiles={[`https://tile.openweathermap.org/map/pressure_new/{z}/{x}/{y}.png?appid=${process.env.NEXT_PUBLIC_OWM_API_KEY}`]}
+                        tileSize={256}
+                    >
+                        <Layer id="owm-pressure-layer" type="raster" paint={{ 'raster-opacity': 0.6, 'raster-fade-duration': 0 }} />
+                    </Source>
+                )}
+                {activeLayers.weather_wind && process.env.NEXT_PUBLIC_OWM_API_KEY && (
+                    <Source
+                        id="owm-wind"
+                        type="raster"
+                        tiles={[`https://tile.openweathermap.org/map/wind_new/{z}/{x}/{y}.png?appid=${process.env.NEXT_PUBLIC_OWM_API_KEY}`]}
+                        tileSize={256}
+                    >
+                        <Layer id="owm-wind-layer" type="raster" paint={{ 'raster-opacity': 0.7, 'raster-fade-duration': 0 }} />
+                    </Source>
+                )}
+                {activeLayers.weather_temperature && process.env.NEXT_PUBLIC_OWM_API_KEY && (
+                    <Source
+                        id="owm-temperature"
+                        type="raster"
+                        tiles={[`https://tile.openweathermap.org/map/temp_new/{z}/{x}/{y}.png?appid=${process.env.NEXT_PUBLIC_OWM_API_KEY}`]}
+                        tileSize={256}
+                    >
+                        <Layer id="owm-temperature-layer" type="raster" paint={{ 'raster-opacity': 0.6, 'raster-fade-duration': 0 }} />
                     </Source>
                 )}
 
@@ -1657,25 +1922,50 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                     </Source>
                 )}
 
-                {/* Military Base positions */}
+                {/* Military Base polygon outlines (LOD — visible when zoomed in) */}
+                {milBasePolygonGeoJSON && (
+                    <Source id="military-bases-poly" type="geojson" data={milBasePolygonGeoJSON as any}>
+                        <Layer
+                            id="military-bases-poly-fill"
+                            type="fill"
+                            paint={{
+                                'fill-color': ['get', 'color'],
+                                'fill-opacity': 0.15,
+                            }}
+                        />
+                        <Layer
+                            id="military-bases-poly-outline"
+                            type="line"
+                            paint={{
+                                'line-color': ['get', 'color'],
+                                'line-width': 1.5,
+                                'line-opacity': 0.7,
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* Military Base point positions */}
                 {militaryBasesGeoJSON && (
                     <Source id="military-bases" type="geojson" data={militaryBasesGeoJSON as any}>
                         <Layer
                             id="military-bases-layer"
                             type="circle"
                             paint={{
-                                'circle-color': ['match', ['get', 'side'], 'red', '#ef4444', 'green', '#22c55e', '#3b82f6'],
-                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 4, 6, 7, 10, 10],
-                                'circle-opacity': 0.8,
-                                'circle-stroke-width': 2,
-                                'circle-stroke-color': ['match', ['get', 'side'], 'red', '#fca5a5', 'green', '#86efac', '#93c5fd'],
+                                'circle-color': ['get', 'color'],
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 3, 6, 5, 10, 8],
+                                'circle-opacity': 0.85,
+                                'circle-stroke-width': 1.5,
+                                'circle-stroke-color': ['get', 'color'],
+                                'circle-stroke-opacity': 0.5,
                             }}
                         />
                         <Layer
                             id="military-bases-label"
                             type="symbol"
+                            minzoom={7}
                             layout={{
-                                'text-field': ['step', ['zoom'], '', 5, ['get', 'name']],
+                                'text-field': ['get', 'name'],
                                 'text-font': ['Noto Sans Bold'],
                                 'text-size': 10,
                                 'text-offset': [0, 1.4],
@@ -1683,7 +1973,7 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                                 'text-allow-overlap': false,
                             }}
                             paint={{
-                                'text-color': ['match', ['get', 'side'], 'red', '#fca5a5', 'green', '#86efac', '#93c5fd'],
+                                'text-color': ['get', 'color'],
                                 'text-halo-color': 'rgba(0,0,0,0.9)',
                                 'text-halo-width': 1,
                             }}
@@ -1861,7 +2151,7 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                     </Source>
                 )}
 
-                {/* Active DDoS arcs — L7 attack origin → target */}
+                {/* Active DDoS arcs — great-circle lines origin → target */}
                 {activeDdosGeoJSON && (
                     <Source id="active-ddos" type="geojson" data={activeDdosGeoJSON as any}>
                         <Layer
@@ -1869,8 +2159,23 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                             type="line"
                             paint={{
                                 'line-color': '#cc00ff',
-                                'line-width': ['interpolate', ['linear'], ['zoom'], 1, 1.5, 5, 3],
-                                'line-opacity': 0.7,
+                                'line-width': ['interpolate', ['linear'], ['zoom'], 1, 1.2, 5, 2.5],
+                                'line-opacity': 0.35,
+                            }}
+                        />
+                    </Source>
+                )}
+                {/* DDoS directional pulse — bright segment sliding along each arc */}
+                {activeDdosGeoJSON && (
+                    <Source id="active-ddos-pulse" type="geojson" data={EMPTY_FC as any}>
+                        <Layer
+                            id="active-ddos-pulse-layer"
+                            type="line"
+                            paint={{
+                                'line-color': '#ee44ff',
+                                'line-width': ['interpolate', ['linear'], ['zoom'], 1, 2.5, 5, 5],
+                                'line-opacity': 0.9,
+                                'line-blur': 2,
                             }}
                         />
                     </Source>
@@ -2263,16 +2568,13 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                     const base = data?.military_bases?.find((_: any, i: number) => `milbase-${i}` === selectedEntity.id);
                     if (!base) return null;
                     const branchLabel: Record<string, string> = {
-                        air_force: 'AIR FORCE', navy: 'NAVY', marines: 'MARINES', army: 'ARMY',
-                        missile: 'MISSILE FORCES', nuclear: 'NUCLEAR FACILITY',
+                        air_force: 'AIR FORCE', air_force_reserve: 'AF RESERVE', air_national_guard: 'AIR NAT\'L GUARD',
+                        army: 'ARMY', army_reserve: 'ARMY RESERVE', army_national_guard: 'ARMY NAT\'L GUARD',
+                        navy: 'NAVY', navy_reserve: 'NAVY RESERVE',
+                        marines: 'MARINES', marines_reserve: 'MARINES RESERVE',
+                        joint: 'JOINT', missile: 'MISSILE FORCES', nuclear: 'NUCLEAR FACILITY', other: 'OTHER',
                     };
-                    const isAdversary = ['China', 'Russia', 'North Korea'].includes(base.country);
-                    const isROC = base.country === 'Taiwan';
-                    const accentColor = isAdversary ? 'red' : isROC ? 'green' : 'blue';
-                    const borderCls = isAdversary ? 'border-red-400/40' : isROC ? 'border-green-400/40' : 'border-blue-400/40';
-                    const textCls = isAdversary ? 'text-[#fca5a5]' : isROC ? 'text-[#86efac]' : 'text-[#93c5fd]';
-                    const titleCls = isAdversary ? 'text-red-400 border-b border-red-400/20' : isROC ? 'text-green-400 border-b border-green-400/20' : 'text-blue-400 border-b border-blue-400/20';
-                    const footerCls = isAdversary ? 'text-red-600' : isROC ? 'text-green-600' : 'text-blue-600';
+                    const color = BRANCH_COLORS[base.branch] || '#9ca3af';
                     return (
                         <Popup
                             longitude={base.lng}
@@ -2283,18 +2585,136 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                             className="threat-popup"
                             maxWidth="280px"
                         >
-                            <div className={`map-popup bg-[#1a1035] border ${borderCls} ${textCls} min-w-[200px]`}>
-                                <div className={`map-popup-title ${titleCls} pb-1`}>
+                            <div className="map-popup bg-[#1a1035] min-w-[200px]" style={{ borderColor: `${color}66` }}>
+                                <div className="map-popup-title pb-1" style={{ color, borderBottomColor: `${color}33` }}>
                                     {base.name}
                                 </div>
-                                <div className="map-popup-row">
-                                    Operator: <span className="text-white">{base.operator}</span>
+                                <div className="map-popup-row" style={{ color: `${color}cc` }}>
+                                    Branch: <span className="text-white">{branchLabel[base.branch] || base.branch.toUpperCase()}</span>
                                 </div>
-                                <div className="map-popup-row">
-                                    Location: <span className="text-white">{base.country}</span>
+                                {base.operator && (
+                                    <div className="map-popup-row" style={{ color: `${color}cc` }}>
+                                        Component: <span className="text-white">{base.operator.toUpperCase()}</span>
+                                    </div>
+                                )}
+                                <div className="map-popup-row" style={{ color: `${color}cc` }}>
+                                    Location: <span className="text-white">{base.state ? `${base.state}, ` : ''}{base.country?.toUpperCase()}</span>
                                 </div>
-                                <div className={`mt-1.5 text-[9px] ${footerCls} tracking-wider`}>
+                                {base.joint && (
+                                    <div className="map-popup-row text-amber-400 font-semibold">JOINT BASE</div>
+                                )}
+                                <div className="mt-1.5 text-[9px] tracking-wider" style={{ color: `${color}99` }}>
                                     MILITARY BASE — {branchLabel[base.branch] || base.branch.toUpperCase()}
+                                </div>
+                            </div>
+                        </Popup>
+                    );
+                })()}
+
+                {/* BGP Anomaly click popup */}
+                {selectedEntity?.type === 'bgp_anomaly' && (() => {
+                    const p = selectedEntity.extra || {};
+                    const lng = p._clickLng; const lat = p._clickLat;
+                    if (lng == null || lat == null) return null;
+                    const isHijack = p.bgp_type === 'hijack';
+                    let prefixes: string[] = [];
+                    try { prefixes = JSON.parse(p.affected_prefixes || '[]'); } catch {}
+                    const ts = p.timestamp ? new Date(p.timestamp).toLocaleString() : '';
+                    return (
+                        <Popup longitude={lng} latitude={lat} closeButton={false} closeOnClick={false}
+                            onClose={() => onEntityClick?.(null)} anchor="bottom" offset={12} maxWidth="300px">
+                            <div className={`map-popup border ${isHijack ? 'border-red-500/50 bg-[#1a0a0a]' : 'border-orange-500/50 bg-[#1a1000]'} min-w-[220px]`}>
+                                <div className={`map-popup-title ${isHijack ? 'text-red-400' : 'text-orange-400'} border-b ${isHijack ? 'border-red-500/20' : 'border-orange-500/20'} pb-1 flex justify-between items-center`}>
+                                    <span>{isHijack ? 'BGP HIJACK' : 'BGP LEAK'}</span>
+                                    <button onClick={() => onEntityClick?.(null)} className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] ml-2">✕</button>
+                                </div>
+                                <div className="map-popup-row">
+                                    {isHijack ? 'Hijacker' : 'Leaker'}: <span className="text-white">{p.hijacker_org || `AS${p.hijacker_asn}`}</span>
+                                    <span className="text-[#8899aa] ml-1">({p.hijacker_country})</span>
+                                </div>
+                                <div className="map-popup-row">
+                                    Victim: <span className="text-white">{p.victim_org || `AS${p.victim_asn}`}</span>
+                                    <span className="text-[#8899aa] ml-1">({p.victim_country})</span>
+                                </div>
+                                {prefixes.length > 0 && (
+                                    <div className="map-popup-row">
+                                        Prefixes: <span className="text-[#aabbcc]">{prefixes.slice(0, 4).join(', ')}{prefixes.length > 4 ? ` +${prefixes.length - 4}` : ''}</span>
+                                    </div>
+                                )}
+                                <div className="map-popup-row">
+                                    Confidence: <span className={`font-bold ${(p.confidence_score || 0) >= 5 ? 'text-red-400' : 'text-yellow-400'}`}>{p.confidence_score}</span>
+                                    <span className="text-[#8899aa] ml-2">Peers: {p.peer_count}</span>
+                                </div>
+                                {ts && <div className="map-popup-row text-[#8899aa]">{ts}</div>}
+                                <div className={`mt-1.5 text-[9px] tracking-wider ${isHijack ? 'text-red-500/70' : 'text-orange-500/70'}`}>
+                                    CLOUDFLARE RADAR — BGP MONITORING
+                                </div>
+                            </div>
+                        </Popup>
+                    );
+                })()}
+
+                {/* CF Traffic Anomaly click popup */}
+                {selectedEntity?.type === 'cf_anomaly' && (() => {
+                    const p = selectedEntity.extra || {};
+                    const lng = p._clickLng; const lat = p._clickLat;
+                    if (lng == null || lat == null) return null;
+                    const isOngoing = (p.status || '').toUpperCase() === 'ONGOING';
+                    const ts = p.timestamp ? new Date(p.timestamp).toLocaleString() : '';
+                    return (
+                        <Popup longitude={lng} latitude={lat} closeButton={false} closeOnClick={false}
+                            onClose={() => onEntityClick?.(null)} anchor="bottom" offset={12} maxWidth="280px">
+                            <div className="map-popup border border-orange-500/50 bg-[#1a1000] min-w-[200px]">
+                                <div className="map-popup-title text-orange-400 border-b border-orange-500/20 pb-1 flex justify-between items-center">
+                                    <span>TRAFFIC ANOMALY</span>
+                                    <button onClick={() => onEntityClick?.(null)} className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] ml-2">✕</button>
+                                </div>
+                                <div className="map-popup-row">
+                                    Location: <span className="text-white font-semibold">{p.location_name || p.location}</span>
+                                </div>
+                                <div className="map-popup-row">
+                                    Status: <span className={`font-bold ${isOngoing ? 'text-red-400' : 'text-green-400'}`}>{isOngoing ? 'ONGOING' : 'RESOLVED'}</span>
+                                </div>
+                                {p.description && (
+                                    <div className="map-popup-row text-[#cccccc] text-[11px] leading-tight mt-1">{p.description}</div>
+                                )}
+                                {ts && <div className="map-popup-row text-[#8899aa] mt-1">{ts}</div>}
+                                <div className="mt-1.5 text-[9px] text-orange-500/70 tracking-wider">
+                                    CLOUDFLARE RADAR — TRAFFIC ANOMALY
+                                </div>
+                            </div>
+                        </Popup>
+                    );
+                })()}
+
+                {/* Active DDoS click popup */}
+                {selectedEntity?.type === 'active_ddos' && (() => {
+                    const p = selectedEntity.extra || {};
+                    const lng = p._clickLng; const lat = p._clickLat;
+                    if (lng == null || lat == null) return null;
+                    const pct = typeof p.requests_percent === 'number' ? p.requests_percent : parseFloat(p.requests_percent || '0');
+                    return (
+                        <Popup longitude={lng} latitude={lat} closeButton={false} closeOnClick={false}
+                            onClose={() => onEntityClick?.(null)} anchor="bottom" offset={12} maxWidth="280px">
+                            <div className="map-popup border border-purple-500/50 bg-[#150a25] min-w-[200px]">
+                                <div className="map-popup-title text-purple-400 border-b border-purple-500/20 pb-1 flex justify-between items-center">
+                                    <span>DDoS ATTACK</span>
+                                    <button onClick={() => onEntityClick?.(null)} className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] ml-2">✕</button>
+                                </div>
+                                <div className="map-popup-row">
+                                    Origin: <span className="text-white font-semibold">{p.origin_country_name || p.origin_country}</span>
+                                </div>
+                                <div className="map-popup-row">
+                                    Target: <span className="text-white font-semibold">{p.target_country_name || p.target_country}</span>
+                                </div>
+                                <div className="map-popup-row">
+                                    Traffic share: <span className={`font-bold ${pct >= 5 ? 'text-red-400' : pct >= 1 ? 'text-yellow-400' : 'text-purple-300'}`}>{pct.toFixed(2)}%</span>
+                                </div>
+                                <div className="map-popup-row text-[#8899aa]">
+                                    Layer: {p.layer || 'L7'}
+                                </div>
+                                <div className="mt-1.5 text-[9px] text-purple-500/70 tracking-wider">
+                                    CLOUDFLARE RADAR — L7 DDoS
                                 </div>
                             </div>
                         </Popup>
@@ -2521,29 +2941,80 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                         );
                 })()}
 
-                {/* REGION DOSSIER — location pin on map (full intel shown in right panel) */}
+                {/* REGION DOSSIER — pin + popup chooser */}
                 {selectedEntity?.type === 'region_dossier' && selectedEntity.extra && (
-                    <Marker
-                        longitude={selectedEntity.extra.lng}
-                        latitude={selectedEntity.extra.lat}
-                        anchor="bottom"
-                        style={{ zIndex: 10 }}
-                    >
-                        <div className="flex flex-col items-center pointer-events-none">
-                            {/* Pulsing ring */}
-                            <div className="w-8 h-8 rounded-full border-2 border-emerald-500 animate-ping absolute opacity-30" />
-                            {/* Pin dot */}
-                            <div className="w-4 h-4 rounded-full bg-emerald-500 border-2 border-emerald-300 shadow-[0_0_15px_rgba(16,185,129,0.6)]" />
-                            {/* Label */}
-                            <div className="mt-2 bg-black/80 border border-emerald-800 rounded px-2 py-1 text-[9px] font-mono text-emerald-400 tracking-widest whitespace-nowrap shadow-[0_0_10px_rgba(16,185,129,0.3)]">
-                                {regionDossierLoading ? 'COMPILING...' : '▶ INTEL TARGET'}
+                    <>
+                        <Marker
+                            longitude={selectedEntity.extra.lng}
+                            latitude={selectedEntity.extra.lat}
+                            anchor="bottom"
+                            style={{ zIndex: 10 }}
+                        >
+                            <div className="flex flex-col items-center pointer-events-none">
+                                <div className="w-8 h-8 rounded-full border-2 border-emerald-500 animate-ping absolute opacity-30" />
+                                <div className="w-4 h-4 rounded-full bg-emerald-500 border-2 border-emerald-300 shadow-[0_0_15px_rgba(16,185,129,0.6)]" />
                             </div>
-                        </div>
-                    </Marker>
+                        </Marker>
+                        {/* Popup chooser — appears after loading completes */}
+                        {!regionDossierLoading && regionDossier && !dossierModal && (
+                            <Popup
+                                longitude={selectedEntity.extra.lng}
+                                latitude={selectedEntity.extra.lat}
+                                closeButton={false}
+                                closeOnClick={false}
+                                onClose={() => onEntityClick(null)}
+                                anchor="bottom"
+                                offset={20}
+                            >
+                                <div className="map-popup border border-emerald-500/40 bg-black/90 min-w-[180px]">
+                                    <div className="map-popup-title text-emerald-400 border-b border-emerald-500/20 pb-1 text-[10px] tracking-widest flex justify-between items-center">
+                                        <span>INTEL TARGET</span>
+                                        <button onClick={() => onEntityClick(null)} className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] ml-2">✕</button>
+                                    </div>
+                                    <div className="flex flex-col gap-1.5 mt-2">
+                                        <button
+                                            onClick={() => setDossierModal('sentinel')}
+                                            disabled={!regionDossier.sentinel2?.found}
+                                            className={`flex items-center gap-2 px-3 py-2 rounded border text-[10px] font-mono tracking-wider transition-colors ${
+                                                regionDossier.sentinel2?.found
+                                                    ? 'border-emerald-500/40 text-emerald-400 hover:bg-emerald-950/40 cursor-pointer'
+                                                    : 'border-[var(--border-primary)] text-[var(--text-muted)] opacity-40 cursor-not-allowed'
+                                            }`}
+                                        >
+                                            <span>🛰️</span> SENTINEL IMAGERY
+                                        </button>
+                                        <button
+                                            onClick={() => setDossierModal('weather')}
+                                            disabled={!regionDossier.weather}
+                                            className={`flex items-center gap-2 px-3 py-2 rounded border text-[10px] font-mono tracking-wider transition-colors ${
+                                                regionDossier.weather
+                                                    ? 'border-cyan-500/40 text-cyan-400 hover:bg-cyan-950/40 cursor-pointer'
+                                                    : 'border-[var(--border-primary)] text-[var(--text-muted)] opacity-40 cursor-not-allowed'
+                                            }`}
+                                        >
+                                            <span>🌤️</span> LOCAL WEATHER
+                                        </button>
+                                    </div>
+                                </div>
+                            </Popup>
+                        )}
+                        {regionDossierLoading && (
+                            <Popup
+                                longitude={selectedEntity.extra.lng}
+                                latitude={selectedEntity.extra.lat}
+                                closeButton={false} closeOnClick={false}
+                                anchor="bottom" offset={20}
+                            >
+                                <div className="map-popup border border-emerald-500/30 bg-black/90">
+                                    <span className="text-emerald-400 text-[9px] font-mono animate-pulse tracking-widest">COMPILING...</span>
+                                </div>
+                            </Popup>
+                        )}
+                    </>
                 )}
 
                 {/* SENTINEL-2 IMAGERY — fullscreen overlay modal */}
-                {selectedEntity?.type === 'region_dossier' && selectedEntity.extra && regionDossier?.sentinel2 && !regionDossierLoading && (() => {
+                {dossierModal === 'sentinel' && selectedEntity?.type === 'region_dossier' && selectedEntity.extra && regionDossier?.sentinel2 && (() => {
                     const s2 = regionDossier.sentinel2;
                     const imgUrl = s2.fullres_url || s2.thumbnail_url;
                     return (
@@ -2562,8 +3033,8 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                                 justifyContent: 'center',
                                 padding: '60px 20px 80px 20px',
                             }}
-                            onClick={(e) => { if (e.target === e.currentTarget) onEntityClick(null); }}
-                            onKeyDown={(e: any) => { if (e.key === 'Escape') onEntityClick(null); }}
+                            onClick={(e) => { if (e.target === e.currentTarget) setDossierModal(null); }}
+                            onKeyDown={(e: any) => { if (e.key === 'Escape') setDossierModal(null); }}
                             tabIndex={-1}
                             ref={(el) => el?.focus()}
                         >
@@ -2598,7 +3069,7 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                                             {selectedEntity.extra.lat.toFixed(4)}, {selectedEntity.extra.lng.toFixed(4)}
                                         </span>
                                         <button
-                                            onClick={() => onEntityClick(null)}
+                                            onClick={() => setDossierModal(null)}
                                             style={{
                                                 background: 'rgba(239,68,68,0.2)',
                                                 border: '1px solid rgba(239,68,68,0.4)',
@@ -2633,21 +3104,109 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                                             <span style={{ color: '#86efac' }}>{s2.cloud_cover?.toFixed(0)}% cloud</span>
                                         </div>
 
-                                        {/* Image */}
-                                        {imgUrl ? (
-                                            <div style={{ flex: 1, overflow: 'auto', display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 400 }}>
-                                                <img
-                                                    src={imgUrl}
-                                                    alt="Sentinel-2 scene"
+                                        {/* Zoomable/pannable image viewer */}
+                                        {imgUrl ? (() => {
+                                            // Inline zoom/pan state via refs for performance
+                                            const containerRef = React.createRef<HTMLDivElement>();
+                                            const stateRef = { scale: 1, panX: 0, panY: 0, dragging: false, lastX: 0, lastY: 0 };
+
+                                            const applyTransform = () => {
+                                                const el = containerRef.current?.querySelector('img') as HTMLImageElement | null;
+                                                if (el) el.style.transform = `translate(${stateRef.panX}px, ${stateRef.panY}px) scale(${stateRef.scale})`;
+                                            };
+
+                                            const handleWheel = (e: React.WheelEvent) => {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                const delta = e.deltaY > 0 ? 0.85 : 1.18;
+                                                const newScale = Math.min(20, Math.max(0.1, stateRef.scale * delta));
+                                                // Zoom toward cursor position
+                                                const rect = containerRef.current?.getBoundingClientRect();
+                                                if (rect) {
+                                                    const cx = e.clientX - rect.left - rect.width / 2;
+                                                    const cy = e.clientY - rect.top - rect.height / 2;
+                                                    const ratio = 1 - newScale / stateRef.scale;
+                                                    stateRef.panX += (cx - stateRef.panX) * ratio;
+                                                    stateRef.panY += (cy - stateRef.panY) * ratio;
+                                                }
+                                                stateRef.scale = newScale;
+                                                applyTransform();
+                                            };
+
+                                            const handleMouseDown = (e: React.MouseEvent) => {
+                                                if (e.button !== 0) return;
+                                                stateRef.dragging = true;
+                                                stateRef.lastX = e.clientX;
+                                                stateRef.lastY = e.clientY;
+                                                e.preventDefault();
+                                            };
+
+                                            const handleMouseMove = (e: React.MouseEvent) => {
+                                                if (!stateRef.dragging) return;
+                                                stateRef.panX += e.clientX - stateRef.lastX;
+                                                stateRef.panY += e.clientY - stateRef.lastY;
+                                                stateRef.lastX = e.clientX;
+                                                stateRef.lastY = e.clientY;
+                                                applyTransform();
+                                            };
+
+                                            const handleMouseUp = () => { stateRef.dragging = false; };
+
+                                            const resetView = () => {
+                                                stateRef.scale = 1; stateRef.panX = 0; stateRef.panY = 0;
+                                                applyTransform();
+                                            };
+
+                                            const zoomIn = () => { stateRef.scale = Math.min(20, stateRef.scale * 1.5); applyTransform(); };
+                                            const zoomOut = () => { stateRef.scale = Math.max(0.1, stateRef.scale / 1.5); applyTransform(); };
+
+                                            const zoomBtnStyle: React.CSSProperties = {
+                                                background: 'rgba(0,0,0,0.7)', border: '1px solid rgba(34,197,94,0.5)',
+                                                borderRadius: 4, color: '#4ade80', fontSize: 14, fontFamily: 'monospace',
+                                                width: 28, height: 28, cursor: 'pointer', display: 'flex',
+                                                alignItems: 'center', justifyContent: 'center',
+                                            };
+
+                                            return (
+                                                <div
+                                                    ref={containerRef}
                                                     style={{
-                                                        maxWidth: '100%',
-                                                        maxHeight: 'calc(100vh - 220px)',
-                                                        objectFit: 'contain',
-                                                        display: 'block',
+                                                        flex: 1, overflow: 'hidden', position: 'relative',
+                                                        cursor: 'grab', minHeight: 400,
+                                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
                                                     }}
-                                                />
-                                            </div>
-                                        ) : (
+                                                    onWheel={handleWheel}
+                                                    onMouseDown={handleMouseDown}
+                                                    onMouseMove={handleMouseMove}
+                                                    onMouseUp={handleMouseUp}
+                                                    onMouseLeave={handleMouseUp}
+                                                >
+                                                    <img
+                                                        src={imgUrl}
+                                                        alt="Sentinel-2 scene"
+                                                        draggable={false}
+                                                        style={{
+                                                            maxWidth: '100%',
+                                                            maxHeight: 'calc(100vh - 220px)',
+                                                            objectFit: 'contain',
+                                                            display: 'block',
+                                                            transformOrigin: 'center center',
+                                                            transition: 'none',
+                                                            userSelect: 'none',
+                                                        }}
+                                                    />
+                                                    {/* Zoom controls */}
+                                                    <div style={{
+                                                        position: 'absolute', bottom: 12, right: 12,
+                                                        display: 'flex', flexDirection: 'column', gap: 4,
+                                                    }}>
+                                                        <button onClick={zoomIn} style={zoomBtnStyle} title="Zoom in">+</button>
+                                                        <button onClick={zoomOut} style={zoomBtnStyle} title="Zoom out">−</button>
+                                                        <button onClick={resetView} style={{ ...zoomBtnStyle, fontSize: 10 }} title="Reset view">⟲</button>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })() : (
                                             <div style={{ padding: '40px 16px', fontSize: 11, color: 'rgba(134,239,172,0.5)', fontFamily: 'monospace', textAlign: 'center' }}>
                                                 Scene found — no preview available
                                             </div>
@@ -2745,6 +3304,17 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                         </div>
                     );
                 })()}
+
+                {/* WEATHER MODAL — fullscreen weather widget */}
+                {dossierModal === 'weather' && selectedEntity?.type === 'region_dossier' && selectedEntity.extra && regionDossier?.weather && (
+                    <WeatherModal
+                        weather={regionDossier.weather}
+                        lat={selectedEntity.extra.lat}
+                        lng={selectedEntity.extra.lng}
+                        locationName={regionDossier?.location?.city || regionDossier?.location?.display_name}
+                        onClose={() => setDossierModal(null)}
+                    />
+                )}
 
                 {/* MEASUREMENT LINES */}
                 {measurePoints && measurePoints.length >= 2 && (

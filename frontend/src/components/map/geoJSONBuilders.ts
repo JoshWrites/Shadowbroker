@@ -2,7 +2,7 @@
 // Extracted from MaplibreViewer to reduce component size and enable unit testing.
 // Each function takes data arrays + optional helpers and returns a GeoJSON FeatureCollection or null.
 
-import type { Earthquake, GPSJammingZone, FireHotspot, InternetOutage, DataCenter, MilitaryBase, GDELTIncident, LiveUAmapIncident, CCTVCamera, KiwiSDR, FrontlineGeoJSON, UAV, Satellite, Ship, ActiveLayers } from "@/types/dashboard";
+import type { Earthquake, GPSJammingZone, FireHotspot, InternetOutage, DataCenter, MilitaryBase, MilBaseBranch, GDELTIncident, LiveUAmapIncident, CCTVCamera, KiwiSDR, FrontlineGeoJSON, UAV, Satellite, Ship, ActiveLayers } from "@/types/dashboard";
 import { classifyAircraft } from "@/utils/aircraftClassification";
 import { MISSION_COLORS, MISSION_ICON_MAP } from "@/components/map/icons/SatelliteIcons";
 
@@ -197,34 +197,61 @@ export function buildDataCentersGeoJSON(datacenters?: DataCenter[]): FC {
 
 // ─── Military Bases ─────────────────────────────────────────────────────────
 
-// Classify base alignment: red = adversary, blue = US/allied, green = ROC
-const _ADVERSARY_COUNTRIES = new Set(["China", "Russia", "North Korea"]);
-const _ROC_COUNTRIES = new Set(["Taiwan"]);
+// Branch → color mapping for the map
+export const BRANCH_COLORS: Record<string, string> = {
+    air_force: '#3b82f6',           // blue
+    air_force_reserve: '#60a5fa',   // lighter blue
+    air_national_guard: '#93c5fd',  // lightest blue
+    army: '#22c55e',                // green
+    army_reserve: '#4ade80',        // lighter green
+    army_national_guard: '#86efac', // lightest green
+    navy: '#6366f1',                // indigo
+    navy_reserve: '#818cf8',        // lighter indigo
+    marines: '#ef4444',             // red
+    marines_reserve: '#f87171',     // lighter red
+    joint: '#f59e0b',               // amber
+    missile: '#f43f5e',             // rose
+    nuclear: '#fbbf24',             // yellow
+    other: '#9ca3af',               // gray
+};
 
-function _baseSide(country: string, operator: string): "red" | "blue" | "green" {
-    if (_ADVERSARY_COUNTRIES.has(country)) return "red";
-    if (_ROC_COUNTRIES.has(country)) return "green";
-    return "blue";
-}
-
-export function buildMilitaryBasesGeoJSON(bases?: MilitaryBase[]): FC {
+export function buildMilitaryBasesGeoJSON(
+    bases?: MilitaryBase[],
+    filter?: Record<string, Set<MilBaseBranch>>,
+    polyActive?: Record<number, boolean>,
+): FC {
     if (!bases?.length) return null;
-    return {
-        type: 'FeatureCollection',
-        features: bases.map((base, i) => ({
+    const hasFilter = filter && Object.keys(filter).length > 0;
+    const features = bases.flatMap((base, i) => {
+        // Skip bases that are currently rendered as polygons
+        if (polyActive && polyActive[i]) return [];
+        if (hasFilter) {
+            const owner = base.owner || base.country || '';
+            const ownerSet = filter![owner];
+            if (!ownerSet) return [];
+            if (!ownerSet.has(base.branch as MilBaseBranch)) return [];
+        }
+        return [{
             type: 'Feature' as const,
             properties: {
                 id: `milbase-${i}`,
+                idx: i,
                 type: 'military_base',
                 name: base.name || 'Unknown',
                 country: base.country || '',
+                state: base.state || '',
                 operator: base.operator || '',
                 branch: base.branch || '',
-                side: _baseSide(base.country || '', base.operator || ''),
+                status: base.status || 'active',
+                joint: base.joint ? 'yes' : 'no',
+                diameter_m: base.diameter_m || 0,
+                color: BRANCH_COLORS[base.branch] || '#9ca3af',
             },
             geometry: { type: 'Point' as const, coordinates: [base.lng, base.lat] }
-        }))
-    };
+        }];
+    });
+    if (!features.length) return null;
+    return { type: 'FeatureCollection', features };
 }
 
 // ─── GDELT Incidents ────────────────────────────────────────────────────────

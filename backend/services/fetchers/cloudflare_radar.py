@@ -45,7 +45,7 @@ def _load_centroids():
         if _centroids_loaded:
             return
         try:
-            data_path = Path(__file__).parent.parent.parent / "data" / "country_centroids.json"
+            data_path = Path(__file__).parent.parent.parent / "static_data" / "country_centroids.json"
             with open(data_path) as f:
                 _CENTROIDS = json.load(f)
             _centroids_loaded = True
@@ -492,21 +492,21 @@ def fetch_cf_anomalies():
 
     try:
         resp = fetch_with_curl(
-            f"{_CF_BASE}/traffic_anomalies?date_range=7d&limit=100",
+            f"{_CF_BASE}/traffic_anomalies?dateRange=7d&limit=100",
             timeout=15,
             headers=headers,
         )
         if resp.status_code == 200:
             data = resp.json()
-            anomalies = data.get("result", {}).get("traffic_anomalies", [])
+            anomalies = data.get("result", {}).get("trafficAnomalies", [])
             for a in anomalies:
-                loc_details = a.get("location_details") or {}
-                asn_details = a.get("asn_details") or {}
-                # Prefer location_details, fall back to asn_details.locations
+                loc_details = a.get("locationDetails") or {}
+                asn_details = a.get("asnDetails") or {}
+                # Prefer locationDetails, fall back to asnDetails.location
                 loc_code = (loc_details.get("code") or
-                            (asn_details.get("locations") or {}).get("code") or "").upper()
+                            (asn_details.get("location") or {}).get("code") or "").upper()
                 loc_name = (loc_details.get("name") or
-                            (asn_details.get("locations") or {}).get("name") or loc_code)
+                            (asn_details.get("location") or {}).get("name") or loc_code)
 
                 if not loc_code:
                     continue
@@ -515,7 +515,7 @@ def fetch_cf_anomalies():
                 if lat is None:
                     continue
 
-                ts = _parse_ts(a.get("start_date"), now_ts)
+                ts = _parse_ts(a.get("startDate"), now_ts)
                 uid = f"cf-{a.get('uuid', f'{loc_code}-{int(ts)}')}"
                 status = (a.get("status") or "UNVERIFIED").upper()
                 record = {
@@ -527,7 +527,7 @@ def fetch_cf_anomalies():
                     "lng": lng,
                     "status": status,
                     "description": str(a.get("description") or ""),
-                    "timestamp": a.get("start_date") or now_iso,
+                    "timestamp": a.get("startDate") or now_iso,
                 }
                 new_records.append(record)
         elif resp.status_code == 403:
@@ -574,7 +574,7 @@ def fetch_active_ddos():
 
     try:
         resp = fetch_with_curl(
-            f"{_CF_BASE}/attacks/layer7/top/attacks?date_range=1d&limit=20&normalization=PERCENTAGE",
+            f"{_CF_BASE}/attacks/layer7/top/attacks?dateRange=1d&limit=20&normalization=PERCENTAGE",
             timeout=15,
             headers=headers,
         )
@@ -582,8 +582,8 @@ def fetch_active_ddos():
             data = resp.json()
             attacks = data.get("result", {}).get("top_0", [])
             for a in attacks:
-                origin = (a.get("origin_country_alpha2") or "").upper()
-                target = (a.get("target_country_alpha2") or "").upper()
+                origin = (a.get("originCountryAlpha2") or "").upper()
+                target = (a.get("targetCountryAlpha2") or "").upper()
                 if not origin or not target or origin == target:
                     continue
 
@@ -602,11 +602,11 @@ def fetch_active_ddos():
                     "id": f"ddos-{origin}-{target}-{ts_int}",
                     "ts": now_ts,
                     "origin_country": origin,
-                    "origin_country_name": a.get("origin_country_name") or origin,
+                    "origin_country_name": a.get("originCountryName") or origin,
                     "origin_lat": o_lat,
                     "origin_lng": o_lng,
                     "target_country": target,
-                    "target_country_name": a.get("target_country_name") or target,
+                    "target_country_name": a.get("targetCountryName") or target,
                     "target_lat": t_lat,
                     "target_lng": t_lng,
                     "requests_percent": pct,
