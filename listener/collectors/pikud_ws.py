@@ -29,6 +29,7 @@ from collectors.pikud import (
     _resolve_city,
 )
 from db import insert_pikud_rows
+from ha_webhook import notify_alert, notify_system_message
 
 logger = logging.getLogger(__name__)
 
@@ -270,6 +271,12 @@ class PikudWSCollector(BaseCollector):
                 + (f" [DRILL]" if is_drill else "")
                 + (f" ({n} new)" if n else " (all dupes)")
             )
+            if n:  # Only notify on new alerts (not dupes)
+                notify_alert(
+                    cities=cities, threat=threat, cat_label=cat_label,
+                    timestamp=alert_iso, is_drill=is_drill,
+                    notification_id=notification_id or None,
+                )
 
     def _handle_system_message(self, data: dict, raw_msg: dict):
         notification_id = data.get("notificationId", "")
@@ -333,3 +340,9 @@ class PikudWSCollector(BaseCollector):
             body_en = data.get("bodyEn") or data.get("body") or ""
             title_en = data.get("titleEn") or ""
             logger.info(f"[pikud] {label}: {title_en} — {body_en}")
+            notify_system_message(
+                label=label, title_en=title_en, body_en=body_en,
+                timestamp=ts_iso,
+                cities_ids=data.get("citiesIds"),
+                areas_ids=data.get("areasIds"),
+            )
