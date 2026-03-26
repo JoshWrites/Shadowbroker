@@ -67,6 +67,7 @@ const POTUS_ICAOS: Record<string, { label: string; type: string }> = {
     'AE5E79': { label: 'Marine One (VH-92A)', type: 'M1' },
 };
 import type { DashboardData, ActiveLayers, SelectedEntity, KiwiSDR, BgpAnomaly, CfAnomaly, MilBaseBranch } from "@/types/dashboard";
+import type { LayerErrorState } from "@/hooks/useDataPolling";
 import { MIL_BASE_BRANCHES } from "@/types/dashboard";
 import { BRANCH_COLORS } from "@/components/map/geoJSONBuilders";
 
@@ -85,7 +86,7 @@ function buildMilBaseFilterFromData(bases: any[]): Record<string, Set<MilBaseBra
 const OWNER_ORDER = ['United States', 'China', 'Russia', 'North Korea', 'Taiwan', 'Philippines', 'Australia'];
 import UkraineDrilldownModal from "@/components/UkraineDrilldownModal";
 
-const WorldviewLeftPanel = React.memo(function WorldviewLeftPanel({ data, activeLayers, setActiveLayers, onSettingsClick, onLegendClick, gibsDate, setGibsDate, gibsOpacity, setGibsOpacity, onEntityClick, onFlyTo, trackedSdr, setTrackedSdr, pikudTimeOffset, setPikudTimeOffset, pikudDbRange, ukraineTimeOffset, setUkraineTimeOffset, ukraineDbRange, bgpTimeOffset, setBgpTimeOffset, bgpDbRange, cfTimeOffset, setCfTimeOffset, cfDbRange, milBaseFilter, setMilBaseFilter }: { data: DashboardData; activeLayers: ActiveLayers; setActiveLayers: React.Dispatch<React.SetStateAction<ActiveLayers>>; onSettingsClick?: () => void; onLegendClick?: () => void; gibsDate?: string; setGibsDate?: (d: string) => void; gibsOpacity?: number; setGibsOpacity?: (o: number) => void; onEntityClick?: (entity: SelectedEntity) => void; onFlyTo?: (lat: number, lng: number) => void; trackedSdr?: KiwiSDR | null; setTrackedSdr?: (sdr: KiwiSDR | null) => void; pikudTimeOffset?: number | null; setPikudTimeOffset?: React.Dispatch<React.SetStateAction<number | null>>; pikudDbRange?: { earliest: number | null; latest: number | null }; ukraineTimeOffset?: number | null; setUkraineTimeOffset?: React.Dispatch<React.SetStateAction<number | null>>; ukraineDbRange?: { earliest: number | null; latest: number | null }; bgpTimeOffset?: number | null; setBgpTimeOffset?: React.Dispatch<React.SetStateAction<number | null>>; bgpDbRange?: { earliest: number | null; latest: number | null }; cfTimeOffset?: number | null; setCfTimeOffset?: React.Dispatch<React.SetStateAction<number | null>>; cfDbRange?: { earliest: number | null; latest: number | null }; milBaseFilter?: Record<string, Set<MilBaseBranch>>; setMilBaseFilter?: React.Dispatch<React.SetStateAction<Record<string, Set<MilBaseBranch>>>> }) {
+const WorldviewLeftPanel = React.memo(function WorldviewLeftPanel({ data, activeLayers, setActiveLayers, layerErrors, onSettingsClick, onLegendClick, gibsDate, setGibsDate, gibsOpacity, setGibsOpacity, onEntityClick, onFlyTo, trackedSdr, setTrackedSdr, pikudTimeOffset, setPikudTimeOffset, pikudDbRange, ukraineTimeOffset, setUkraineTimeOffset, ukraineDbRange, bgpTimeOffset, setBgpTimeOffset, bgpDbRange, cfTimeOffset, setCfTimeOffset, cfDbRange, milBaseFilter, setMilBaseFilter }: { data: DashboardData; activeLayers: ActiveLayers; setActiveLayers: React.Dispatch<React.SetStateAction<ActiveLayers>>; layerErrors?: Record<string, LayerErrorState>; onSettingsClick?: () => void; onLegendClick?: () => void; gibsDate?: string; setGibsDate?: (d: string) => void; gibsOpacity?: number; setGibsOpacity?: (o: number) => void; onEntityClick?: (entity: SelectedEntity) => void; onFlyTo?: (lat: number, lng: number) => void; trackedSdr?: KiwiSDR | null; setTrackedSdr?: (sdr: KiwiSDR | null) => void; pikudTimeOffset?: number | null; setPikudTimeOffset?: React.Dispatch<React.SetStateAction<number | null>>; pikudDbRange?: { earliest: number | null; latest: number | null }; ukraineTimeOffset?: number | null; setUkraineTimeOffset?: React.Dispatch<React.SetStateAction<number | null>>; ukraineDbRange?: { earliest: number | null; latest: number | null }; bgpTimeOffset?: number | null; setBgpTimeOffset?: React.Dispatch<React.SetStateAction<number | null>>; bgpDbRange?: { earliest: number | null; latest: number | null }; cfTimeOffset?: number | null; setCfTimeOffset?: React.Dispatch<React.SetStateAction<number | null>>; cfDbRange?: { earliest: number | null; latest: number | null }; milBaseFilter?: Record<string, Set<MilBaseBranch>>; setMilBaseFilter?: React.Dispatch<React.SetStateAction<Record<string, Set<MilBaseBranch>>>> }) {
     const [isMinimized, setIsMinimized] = useState(false);
     const { theme, toggleTheme, hudColor, cycleHudColor } = useTheme();
     const [gibsPlaying, setGibsPlaying] = useState(false);
@@ -490,6 +491,7 @@ const WorldviewLeftPanel = React.memo(function WorldviewLeftPanel({ data, active
                                 {layers.map((layer, idx) => {
                                     const Icon = layer.icon;
                                     const active = activeLayers[layer.id as keyof typeof activeLayers] || false;
+                                    const errorState = layerErrors?.[layer.id];
 
                                     return (
                                         <div key={idx} className="flex flex-col">
@@ -498,28 +500,42 @@ const WorldviewLeftPanel = React.memo(function WorldviewLeftPanel({ data, active
                                                 onClick={() => setActiveLayers((prev: any) => ({ ...prev, [layer.id]: !active }))}
                                             >
                                                 <div className="flex gap-3">
-                                                    <div className={`mt-1 ${active ? 'text-cyan-400' : 'text-gray-600 group-hover:text-gray-400'} transition-colors`}>
+                                                    <div className={`mt-1 ${errorState ? 'text-red-400' : active ? 'text-cyan-400' : 'text-gray-600 group-hover:text-gray-400'} transition-colors`}>
                                                         {(layer.id.startsWith('ships_')) ? shipIcon : <Icon size={16} strokeWidth={1.5} />}
                                                     </div>
                                                     <div className="flex flex-col">
-                                                        <span className={`text-sm font-medium ${active ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'} tracking-wide`}>{layer.name}</span>
-                                                        <span className="text-[9px] text-[var(--text-muted)] font-mono tracking-wider mt-0.5">{layer.source} · {active ? (() => {
-                                                            const fKey = FRESHNESS_MAP[layer.id];
-                                                            const freshness = fKey && data?.freshness?.[fKey];
-                                                            const rt = freshness ? relativeTime(freshness) : '';
-                                                            return rt ? <span className="text-cyan-500/70">{rt}</span> : 'LIVE';
-                                                        })() : 'OFF'}</span>
+                                                        <span className={`text-sm font-medium ${errorState ? 'text-red-300' : active ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'} tracking-wide`}>{layer.name}</span>
+                                                        {errorState === 'failed' ? (
+                                                            <span className="text-[9px] text-red-400/80 font-mono tracking-wider mt-0.5">ERROR: TOGGLE TO RETRY</span>
+                                                        ) : errorState === 'retrying' ? (
+                                                            <span className="text-[9px] text-amber-400/80 font-mono tracking-wider mt-0.5 flex items-center gap-1">
+                                                                <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                                                                {layer.source} · RETRYING
+                                                            </span>
+                                                        ) : (
+                                                            <span className="text-[9px] text-[var(--text-muted)] font-mono tracking-wider mt-0.5">{layer.source} · {active ? (() => {
+                                                                const fKey = FRESHNESS_MAP[layer.id];
+                                                                const freshness = fKey && data?.freshness?.[fKey];
+                                                                const rt = freshness ? relativeTime(freshness) : '';
+                                                                return rt ? <span className="text-cyan-500/70">{rt}</span> : 'LIVE';
+                                                            })() : 'OFF'}</span>
+                                                        )}
                                                     </div>
                                                 </div>
                                                 <div className="flex items-center gap-3">
-                                                    {active && (layer.count ?? 0) > 0 && (
+                                                    {active && !errorState && (layer.count ?? 0) > 0 && (
                                                         <span className="text-[10px] text-gray-300 font-mono">{(layer.count ?? 0).toLocaleString()}</span>
                                                     )}
-                                                    <div className={`text-[9px] font-mono tracking-wider px-2 py-0.5 rounded-full border ${active
-                                                        ? 'border-cyan-500/50 text-cyan-400 bg-cyan-950/30 shadow-[0_0_10px_rgba(34,211,238,0.2)]'
-                                                        : 'border-[var(--border-primary)] text-[var(--text-muted)] bg-transparent'
+                                                    <div className={`text-[9px] font-mono tracking-wider px-2 py-0.5 rounded-full border ${
+                                                        errorState === 'failed'
+                                                            ? 'border-red-500/50 text-red-400 bg-red-950/30 shadow-[0_0_10px_rgba(239,68,68,0.2)]'
+                                                        : errorState === 'retrying'
+                                                            ? 'border-amber-500/50 text-amber-400 bg-amber-950/30'
+                                                        : active
+                                                            ? 'border-cyan-500/50 text-cyan-400 bg-cyan-950/30 shadow-[0_0_10px_rgba(34,211,238,0.2)]'
+                                                            : 'border-[var(--border-primary)] text-[var(--text-muted)] bg-transparent'
                                                         }`}>
-                                                        {active ? 'ON' : 'OFF'}
+                                                        {errorState === 'failed' ? 'ERR' : errorState === 'retrying' ? 'RETRY' : active ? 'ON' : 'OFF'}
                                                     </div>
                                                 </div>
                                             </div>

@@ -125,21 +125,6 @@ function LocateBar({ onLocate }: { onLocate: (lat: number, lng: number) => void 
 }
 
 export default function Dashboard() {
-  const { data, dataVersion, backendStatus } = useDataPolling();
-  const { mouseCoords, locationLabel, handleMouseCoords } = useReverseGeocode();
-  const [selectedEntity, setSelectedEntity] = useState<SelectedEntity | null>(null);
-  const [trackedSdr, setTrackedSdr] = useState<any>(null);
-  const { regionDossier, regionDossierLoading, handleMapRightClick } = useRegionDossier(selectedEntity, setSelectedEntity);
-
-  const [uiVisible, setUiVisible] = useState(true);
-  const [leftOpen, setLeftOpen] = useState(true);
-  const [rightOpen, setRightOpen] = useState(true);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [legendOpen, setLegendOpen] = useState(false);
-  const [mapView, setMapView] = useState({ zoom: 2, latitude: 20 });
-  const [measureMode, setMeasureMode] = useState(false);
-  const [measurePoints, setMeasurePoints] = useState<{ lat: number; lng: number }[]>([]);
-
   const [activeLayers, setActiveLayers] = useState({
     flights: false,
     private: false,
@@ -180,6 +165,21 @@ export default function Dashboard() {
     weather_temperature: false,
   });
 
+  const { data, dataVersion, backendStatus, layerErrors } = useDataPolling(activeLayers);
+  const { mouseCoords, locationLabel, handleMouseCoords } = useReverseGeocode();
+  const [selectedEntity, setSelectedEntity] = useState<SelectedEntity | null>(null);
+  const [trackedSdr, setTrackedSdr] = useState<any>(null);
+  const { regionDossier, regionDossierLoading, handleMapRightClick } = useRegionDossier(selectedEntity, setSelectedEntity);
+
+  const [uiVisible, setUiVisible] = useState(true);
+  const [leftOpen, setLeftOpen] = useState(true);
+  const [rightOpen, setRightOpen] = useState(true);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [legendOpen, setLegendOpen] = useState(false);
+  const [mapView, setMapView] = useState({ zoom: 2, latitude: 20 });
+  const [measureMode, setMeasureMode] = useState(false);
+  const [measurePoints, setMeasurePoints] = useState<{ lat: number; lng: number }[]>([]);
+
   // CCTV on-demand loading — seed cameras when user enables the layer
   const [cctvLoading, setCctvLoading] = useState(false);
   const cctvSeeded = useRef(false);
@@ -217,13 +217,14 @@ export default function Dashboard() {
   const [pikudHistoryData, setPikudHistoryData] = useState<PikudAlert[]>([]);
   const [pikudDbRange, setPikudDbRange] = useState<{ earliest: number | null; latest: number | null }>({ earliest: null, latest: null });
 
-  // Fetch Pikud DB time range on mount
+  // Fetch Pikud DB time range when layer is enabled
   useEffect(() => {
+    if (!activeLayers.pikud_alerts) return;
     fetch(`${BACKEND_DIRECT}/api/pikud-alerts/range`)
       .then(r => r.json())
       .then(d => setPikudDbRange({ earliest: d.earliest ?? null, latest: d.latest ?? null }))
       .catch(() => {});
-  }, []);
+  }, [activeLayers.pikud_alerts]);
 
   // Fetch historical slice whenever offset changes
   useEffect(() => {
@@ -245,11 +246,12 @@ export default function Dashboard() {
   const [ukraineDbRange, setUkraineDbRange] = useState<{ earliest: number | null; latest: number | null }>({ earliest: null, latest: null });
 
   useEffect(() => {
+    if (!activeLayers.ukraine_alerts) return;
     fetch(`${BACKEND_DIRECT}/api/ukraine-alerts/range`)
       .then(r => r.json())
       .then(d => setUkraineDbRange({ earliest: d.earliest ?? null, latest: d.latest ?? null }))
       .catch(() => {});
-  }, []);
+  }, [activeLayers.ukraine_alerts]);
 
   useEffect(() => {
     if (ukraineTimeOffset === null) { setUkraineHistoryData([]); return; }
@@ -270,11 +272,12 @@ export default function Dashboard() {
   const [bgpDbRange, setBgpDbRange] = useState<{ earliest: number | null; latest: number | null }>({ earliest: null, latest: null });
 
   useEffect(() => {
+    if (!activeLayers.bgp_anomalies) return;
     fetch(`${BACKEND_DIRECT}/api/bgp-anomalies/range`)
       .then(r => r.json())
       .then(d => setBgpDbRange({ earliest: d.earliest ?? null, latest: d.latest ?? null }))
       .catch(() => {});
-  }, []);
+  }, [activeLayers.bgp_anomalies]);
 
   useEffect(() => {
     if (bgpTimeOffset === null) { setBgpHistoryData([]); return; }
@@ -295,11 +298,12 @@ export default function Dashboard() {
   const [cfDbRange, setCfDbRange] = useState<{ earliest: number | null; latest: number | null }>({ earliest: null, latest: null });
 
   useEffect(() => {
+    if (!activeLayers.cf_anomalies) return;
     fetch(`${BACKEND_DIRECT}/api/cf-anomalies/range`)
       .then(r => r.json())
       .then(d => setCfDbRange({ earliest: d.earliest ?? null, latest: d.latest ?? null }))
       .catch(() => {});
-  }, []);
+  }, [activeLayers.cf_anomalies]);
 
   useEffect(() => {
     if (cfTimeOffset === null) { setCfHistoryData([]); return; }
@@ -431,7 +435,7 @@ export default function Dashboard() {
           >
             {/* LEFT PANEL - DATA LAYERS */}
             <ErrorBoundary name="WorldviewLeftPanel">
-              <WorldviewLeftPanel data={data} activeLayers={activeLayers} setActiveLayers={setActiveLayers} onSettingsClick={() => setSettingsOpen(true)} onLegendClick={() => setLegendOpen(true)} gibsDate={gibsDate} setGibsDate={setGibsDate} gibsOpacity={gibsOpacity} setGibsOpacity={setGibsOpacity} onEntityClick={setSelectedEntity} onFlyTo={(lat, lng) => setFlyToLocation({ lat, lng, ts: Date.now() })} trackedSdr={trackedSdr} setTrackedSdr={setTrackedSdr} pikudTimeOffset={pikudTimeOffset} setPikudTimeOffset={setPikudTimeOffset} pikudDbRange={pikudDbRange} ukraineTimeOffset={ukraineTimeOffset} setUkraineTimeOffset={setUkraineTimeOffset} ukraineDbRange={ukraineDbRange} bgpTimeOffset={bgpTimeOffset} setBgpTimeOffset={setBgpTimeOffset} bgpDbRange={bgpDbRange} cfTimeOffset={cfTimeOffset} setCfTimeOffset={setCfTimeOffset} cfDbRange={cfDbRange} milBaseFilter={milBaseFilter} setMilBaseFilter={setMilBaseFilter} />
+              <WorldviewLeftPanel data={data} activeLayers={activeLayers} setActiveLayers={setActiveLayers} layerErrors={layerErrors} onSettingsClick={() => setSettingsOpen(true)} onLegendClick={() => setLegendOpen(true)} gibsDate={gibsDate} setGibsDate={setGibsDate} gibsOpacity={gibsOpacity} setGibsOpacity={setGibsOpacity} onEntityClick={setSelectedEntity} onFlyTo={(lat, lng) => setFlyToLocation({ lat, lng, ts: Date.now() })} trackedSdr={trackedSdr} setTrackedSdr={setTrackedSdr} pikudTimeOffset={pikudTimeOffset} setPikudTimeOffset={setPikudTimeOffset} pikudDbRange={pikudDbRange} ukraineTimeOffset={ukraineTimeOffset} setUkraineTimeOffset={setUkraineTimeOffset} ukraineDbRange={ukraineDbRange} bgpTimeOffset={bgpTimeOffset} setBgpTimeOffset={setBgpTimeOffset} bgpDbRange={bgpDbRange} cfTimeOffset={cfTimeOffset} setCfTimeOffset={setCfTimeOffset} cfDbRange={cfDbRange} milBaseFilter={milBaseFilter} setMilBaseFilter={setMilBaseFilter} />
             </ErrorBoundary>
           </motion.div>
 

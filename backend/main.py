@@ -319,72 +319,140 @@ def _bbox_filter(items: list, s: float, w: float, n: float, e: float,
                 out.append(item)
     return out
 
+# ---------------------------------------------------------------------------
+# Layer → data-key mapping for demand-driven fetching.
+# When the frontend passes ?layers=flights,ships_military the response only
+# includes the data keys those layers need, saving bandwidth on cold load.
+# ---------------------------------------------------------------------------
+_FAST_LAYER_KEYS: dict[str, list[str]] = {
+    "flights":        ["commercial_flights"],
+    "private":        ["private_flights"],
+    "jets":           ["private_jets"],
+    "military":       ["military_flights"],
+    "tracked":        ["tracked_flights"],
+    "ships_military": ["ships"],
+    "ships_cargo":    ["ships"],
+    "ships_civilian": ["ships"],
+    "ships_passenger":["ships"],
+    "ships_tracked_yachts": ["ships"],
+    "satellites":     ["satellites", "satellite_source"],
+    "trains":         ["trains"],
+    "cctv":           ["cctv"],
+    "gps_jamming":    ["gps_jamming"],
+    "global_incidents": ["liveuamap"],
+    "pikud_alerts":   ["pikud_alerts"],
+    "ukraine_alerts": ["ukraine_alerts"],
+}
+
+_SLOW_LAYER_KEYS: dict[str, list[str]] = {
+    "earthquakes":      ["earthquakes"],
+    "ukraine_frontline":["frontlines"],
+    "global_incidents": ["gdelt"],
+    "kiwisdr":          ["kiwisdr"],
+    "internet_outages": ["internet_outages"],
+    "firms":            ["firms_fires"],
+    "datacenters":      ["datacenters"],
+    "military_bases":   ["military_bases"],
+    "bgp_anomalies":    ["bgp_anomalies"],
+    "cf_anomalies":     ["cf_anomalies"],
+    "active_ddos":      ["active_ddos"],
+}
+
+def _requested_keys(layers_csv: str | None, layer_map: dict[str, list[str]]) -> set[str] | None:
+    """Return set of data keys for requested layers, or None = send everything."""
+    if not layers_csv:
+        return None  # backwards-compat: no param → full payload
+    requested: set[str] = set()
+    for layer in layers_csv.split(","):
+        layer = layer.strip()
+        if layer in layer_map:
+            requested.update(layer_map[layer])
+    return requested
+
 @app.get("/api/live-data/fast")
 async def live_data_fast(request: Request,
                          s: float = Query(None, description="South bound"),
                          w: float = Query(None, description="West bound"),
                          n: float = Query(None, description="North bound"),
-                         e: float = Query(None, description="East bound")):
+                         e: float = Query(None, description="East bound"),
+                         layers: str = Query(None, description="Comma-separated layer IDs to include")):
+    wanted = _requested_keys(layers, _FAST_LAYER_KEYS)
+    # If layers param given but no matching keys, return minimal response
+    if wanted is not None and len(wanted) == 0:
+        return _etag_response(request, {"freshness": dict(source_timestamps)}, prefix="fast|empty|")
+
     d = get_latest_data()
     has_bbox = all(v is not None for v in (s, w, n, e))
     def _f(items, lat_key="lat", lng_key="lng"):
         return _bbox_filter(items, s, w, n, e, lat_key, lng_key) if has_bbox else items
-    payload = {
-        "commercial_flights": _f(d.get("commercial_flights", [])),
-        "military_flights": _f(d.get("military_flights", [])),
-        "private_flights": _f(d.get("private_flights", [])),
-        "private_jets": _f(d.get("private_jets", [])),
-        "tracked_flights": d.get("tracked_flights", []),  # Always send tracked (small set)
-        "ships": _f(d.get("ships", [])),
-        "cctv": _f(d.get("cctv", []), lat_key="lat", lng_key="lon"),
-        "uavs": _f(d.get("uavs", [])),
-        "liveuamap": _f(d.get("liveuamap", [])),
-        "gps_jamming": _f(d.get("gps_jamming", [])),
-        "satellites": _f(d.get("satellites", [])),
-        "satellite_source": d.get("satellite_source", "none"),
-        "trains": _f(d.get("trains", [])),
-        "pikud_alerts": _f(d.get("pikud_alerts", [])),      # Live ring buffer — updated every 5s
-        "ukraine_alerts": _f(d.get("ukraine_alerts", [])),  # Live ring buffer — updated every 30s
-        "freshness": dict(source_timestamps),
-    }
+    def _include(key):
+        return wanted is None or key in wanted
+
+    payload: dict = {}
+    if _include("commercial_flights"): payload["commercial_flights"] = _f(d.get("commercial_flights", []))
+    if _include("military_flights"):   payload["military_flights"] = _f(d.get("military_flights", []))
+    if _include("private_flights"):    payload["private_flights"] = _f(d.get("private_flights", []))
+    if _include("private_jets"):       payload["private_jets"] = _f(d.get("private_jets", []))
+    if _include("tracked_flights"):    payload["tracked_flights"] = d.get("tracked_flights", [])
+    if _include("ships"):              payload["ships"] = _f(d.get("ships", []))
+    if _include("cctv"):               payload["cctv"] = _f(d.get("cctv", []), lat_key="lat", lng_key="lon")
+    if _include("uavs"):               payload["uavs"] = _f(d.get("uavs", []))
+    if _include("liveuamap"):          payload["liveuamap"] = _f(d.get("liveuamap", []))
+    if _include("gps_jamming"):        payload["gps_jamming"] = _f(d.get("gps_jamming", []))
+    if _include("satellites"):         payload["satellites"] = _f(d.get("satellites", []))
+    if _include("satellite_source"):   payload["satellite_source"] = d.get("satellite_source", "none")
+    if _include("trains"):             payload["trains"] = _f(d.get("trains", []))
+    if _include("pikud_alerts"):       payload["pikud_alerts"] = _f(d.get("pikud_alerts", []))
+    if _include("ukraine_alerts"):     payload["ukraine_alerts"] = _f(d.get("ukraine_alerts", []))
+    payload["freshness"] = dict(source_timestamps)
+
     bbox_tag = f"{s},{w},{n},{e}" if has_bbox else "full"
-    return _etag_response(request, payload, prefix=f"fast|{bbox_tag}|")
+    layers_tag = layers or "all"
+    return _etag_response(request, payload, prefix=f"fast|{bbox_tag}|{layers_tag}|")
 
 @app.get("/api/live-data/slow")
 async def live_data_slow(request: Request,
                          s: float = Query(None, description="South bound"),
                          w: float = Query(None, description="West bound"),
                          n: float = Query(None, description="North bound"),
-                         e: float = Query(None, description="East bound")):
+                         e: float = Query(None, description="East bound"),
+                         layers: str = Query(None, description="Comma-separated layer IDs to include")):
+    wanted = _requested_keys(layers, _SLOW_LAYER_KEYS)
+
     d = get_latest_data()
     has_bbox = all(v is not None for v in (s, w, n, e))
     def _f(items, lat_key="lat", lng_key="lng"):
         return _bbox_filter(items, s, w, n, e, lat_key, lng_key) if has_bbox else items
-    payload = {
-        "last_updated": d.get("last_updated"),
-        "news": d.get("news", []),  # News has coords but we always send it (small set, important)
-        "stocks": d.get("stocks", {}),
-        "oil": d.get("oil", {}),
-        "weather": d.get("weather"),
-        "traffic": d.get("traffic", []),
-        "earthquakes": _f(d.get("earthquakes", [])),
-        "frontlines": d.get("frontlines"),  # Always send (GeoJSON polygon, not point-filterable)
-        "gdelt": d.get("gdelt", []),  # GeoJSON features — filtered client-side
-        "airports": d.get("airports", []),  # Always send (reference data)
-        "kiwisdr": _f(d.get("kiwisdr", []), lat_key="lat", lng_key="lon"),
-        "space_weather": d.get("space_weather"),
-        "internet_outages": _f(d.get("internet_outages", [])),
-        "firms_fires": _f(d.get("firms_fires", [])),
-        "datacenters": _f(d.get("datacenters", [])),
-        "military_bases": _f(d.get("military_bases", [])),
-        "bgp_anomalies": d.get("bgp_anomalies", []),
-        "cf_anomalies": d.get("cf_anomalies", []),
-        "active_ddos": d.get("active_ddos", []),
-        "internet_quality": d.get("internet_quality", {}),
-        "freshness": dict(source_timestamps),
-    }
+    def _include(key):
+        return wanted is None or key in wanted
+
+    payload: dict = {}
+    # Always-send context data (small, needed by right-panel widgets)
+    payload["last_updated"] = d.get("last_updated")
+    payload["news"] = d.get("news", [])
+    payload["stocks"] = d.get("stocks", {})
+    payload["oil"] = d.get("oil", {})
+    payload["weather"] = d.get("weather")
+    payload["space_weather"] = d.get("space_weather")
+    payload["airports"] = d.get("airports", [])
+    payload["internet_quality"] = d.get("internet_quality", {})
+    # Layer-gated data (skipped when layers param is present but has no slow-tier matches)
+    if _include("earthquakes"):       payload["earthquakes"] = _f(d.get("earthquakes", []))
+    if _include("frontlines"):        payload["frontlines"] = d.get("frontlines")
+    if _include("gdelt"):             payload["gdelt"] = d.get("gdelt", [])
+    if _include("kiwisdr"):           payload["kiwisdr"] = _f(d.get("kiwisdr", []), lat_key="lat", lng_key="lon")
+    if _include("internet_outages"):  payload["internet_outages"] = _f(d.get("internet_outages", []))
+    if _include("firms_fires"):       payload["firms_fires"] = _f(d.get("firms_fires", []))
+    if _include("datacenters"):       payload["datacenters"] = _f(d.get("datacenters", []))
+    if _include("military_bases"):    payload["military_bases"] = _f(d.get("military_bases", []))
+    if _include("bgp_anomalies"):     payload["bgp_anomalies"] = d.get("bgp_anomalies", [])
+    if _include("cf_anomalies"):      payload["cf_anomalies"] = d.get("cf_anomalies", [])
+    if _include("active_ddos"):       payload["active_ddos"] = d.get("active_ddos", [])
+    payload["freshness"] = dict(source_timestamps)
+
     bbox_tag = f"{s},{w},{n},{e}" if has_bbox else "full"
-    return _etag_response(request, payload, prefix=f"slow|{bbox_tag}|", default=str)
+    layers_tag = layers or "all"
+    return _etag_response(request, payload, prefix=f"slow|{bbox_tag}|{layers_tag}|", default=str)
 
 @app.get("/api/pikud-alerts/history")
 async def pikud_history(request: Request, from_ts: float = Query(None), until_ts: float = Query(None)):
