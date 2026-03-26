@@ -215,32 +215,37 @@ def _parse_active(raw: list) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def fetch_ukraine_alerts():
-    """Poll the active alerts endpoint every 30 seconds."""
-    token = os.environ.get("UKRAINE_ALERTS_TOKEN", "").strip()
-    if not token:
-        # No token configured — store empty list, mark fresh so UI shows layer as active
-        with _data_lock:
-            latest_data["ukraine_alerts"] = list(_alert_ring)
-        _mark_fresh("ukraine_alerts")
-        return
+    """Poll for active Ukraine alerts every 30 seconds.
 
+    Two modes:
+      1. Direct API polling if UKRAINE_ALERTS_TOKEN is set.
+      2. Pull from LXC 110 listener API if UKRAINE_LISTENER_URL (or LISTENER_URL) is set.
+    At least one must be configured for this layer to show data.
+    """
+    token = os.environ.get("UKRAINE_ALERTS_TOKEN", "").strip()
     active_records = []
-    try:
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/json",
-        }
-        resp = fetch_with_curl(_ACTIVE_URL, timeout=10, headers=headers)
-        if resp.status_code == 200:
-            raw = resp.json()
-            alerts_list = raw if isinstance(raw, list) else raw.get("alerts", [])
-            active_records = _parse_active(alerts_list)
-            if active_records:
-                logger.info(f"Ukraine alerts ACTIVE: {len(active_records)} oblasts")
-                _add_to_ring(active_records)
-                _persist_alerts(active_records)
-    except Exception as e:
-        logger.error(f"Ukraine alerts fetch error: {e}")
+
+    if token:
+        # Mode 1: Direct API polling
+        try:
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+            }
+            resp = fetch_with_curl(_ACTIVE_URL, timeout=10, headers=headers)
+            if resp.status_code == 200:
+                raw = resp.json()
+                alerts_list = raw if isinstance(raw, list) else raw.get("alerts", [])
+                active_records = _parse_active(alerts_list)
+                if active_records:
+                    logger.info(f"Ukraine alerts ACTIVE: {len(active_records)} oblasts")
+                    _add_to_ring(active_records)
+                    _persist_alerts(active_records)
+        except Exception as e:
+            logger.error(f"Ukraine alerts fetch error: {e}")
+    else:
+        # Mode 2: Pull recent alerts from the listener API
+        active_records = _fetch_from_listener()
 
     with _ring_lock:
         ring_list = list(_alert_ring)
@@ -253,6 +258,58 @@ def fetch_ukraine_alerts():
         latest_data["ukraine_alerts"] = combined
 
     _mark_fresh("ukraine_alerts")
+
+
+def _fetch_from_listener() -> list[dict]:
+    """Fetch the last 60 minutes of alerts from the Ukraine listener API."""
+    import time as _time
+    import urllib.request
+
+    listener_url = (os.environ.get("UKRAINE_LISTENER_URL") or os.environ.get("LISTENER_URL", "")).rstrip("/")
+    if not listener_url:
+        return []
+
+    try:
+        now = _time.time()
+        from_ts = now - 3600  # last 60 minutes
+        url = f"{listener_url}/backfill/ukraine_alerts?from_ts={from_ts}&until_ts={now}"
+        req = urllib.request.Request(url, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            if resp.status != 200:
+                return []
+            payload = json.loads(resp.read().decode())
+
+        records = payload.get("records", [])
+        parsed = []
+        for r in records:
+            p = r.get("payload", r)
+            region_id = p.get("region_id")
+            geo = OBLAST_GEO.get(int(region_id)) if region_id else None
+            alert_type = (p.get("type") or "UNKNOWN").upper()
+            type_info = ALERT_TYPES.get(alert_type, ALERT_TYPES["UNKNOWN"])
+            fid = r.get("id") or f"ua-{region_id}-{alert_type}-{int(r.get('ts', 0))}"
+            rec = {
+                "id": fid,
+                "region": p.get("region") or (geo["name"] if geo else "Unknown"),
+                "region_id": int(region_id) if region_id else None,
+                "lat": r.get("lat") or (geo["lat"] if geo else None),
+                "lng": r.get("lng") or (geo["lng"] if geo else None),
+                "type": alert_type,
+                "type_label": p.get("type_label") or type_info["label"],
+                "color": p.get("color") or type_info["color"],
+                "timestamp": p.get("timestamp", ""),
+                "ts": r.get("ts"),
+                "active": p.get("active", False),
+            }
+            parsed.append(rec)
+        if parsed:
+            _add_to_ring(parsed)
+            _persist_alerts(parsed)
+            logger.info(f"Ukraine alerts from listener: {len(parsed)} records")
+        return [r for r in parsed if r.get("active")]
+    except Exception as e:
+        logger.warning(f"Ukraine alerts listener fetch: {e}")
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -268,7 +325,7 @@ def backfill_ukraine_from_listener():
     import time as _time
     import urllib.request
 
-    listener_url = os.environ.get("LISTENER_URL", "").rstrip("/")
+    listener_url = (os.environ.get("UKRAINE_LISTENER_URL") or os.environ.get("LISTENER_URL", "")).rstrip("/")
     if not listener_url:
         return
 

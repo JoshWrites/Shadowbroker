@@ -14,6 +14,8 @@ services:
       - CORS_ORIGINS=${CORS_ORIGINS:-}
       # Optional: Signal Archive listener for gap backfill on startup. Leave unset to disable.
       - LISTENER_URL=${LISTENER_URL:-}
+      # Ukraine alerts listener (LXC 110). Falls back to LISTENER_URL if unset.
+      - UKRAINE_LISTENER_URL=${UKRAINE_LISTENER_URL:-}
       # Ukraine alerts.in.ua bearer token — register at devs.alerts.in.ua. Leave unset to disable.
       - UKRAINE_ALERTS_TOKEN=${UKRAINE_ALERTS_TOKEN:-}
       # Cloudflare Radar API token — Account > Radar > Read. Leave unset to disable CF Radar layers.
