@@ -799,6 +799,289 @@ class OHGOIngestor(BaseCCTVIngestor):
         return cameras
 
 
+class WSDOTIngestor(BaseCCTVIngestor):
+    """Washington State DOT cameras via ArcGIS REST (1,500+ cameras)."""
+
+    URL = (
+        "https://www.wsdot.wa.gov/arcgis/rest/services/Production/"
+        "WSDOTTrafficCameras/MapServer/0/query"
+    )
+
+    def fetch_data(self) -> List[Dict[str, Any]]:
+        resp = fetch_with_curl(
+            self.URL + "?where=1%3D1"
+            "&outFields=CameraID,CameraTitl,ImageURL,CameraOwne"
+            "&outSR=4326&f=json",
+            timeout=25,
+        )
+        if not resp or resp.status_code != 200:
+            logger.error(f"WSDOT fetch failed: HTTP {resp.status_code if resp else 'no response'}")
+            return []
+        data = resp.json()
+        cameras = []
+        for feat in data.get("features", []):
+            attrs = feat.get("attributes", {})
+            geom = feat.get("geometry", {})
+            cam_id = attrs.get("CameraID")
+            lat = geom.get("y")
+            lon = geom.get("x")
+            img = attrs.get("ImageURL")
+            if not (cam_id and lat and lon and img):
+                continue
+            try:
+                lat, lon = float(lat), float(lon)
+            except (ValueError, TypeError):
+                continue
+            cameras.append(
+                {
+                    "id": f"WSDOT-{cam_id}",
+                    "source_agency": (attrs.get("CameraOwne") or "WSDOT")[:60],
+                    "lat": lat,
+                    "lon": lon,
+                    "direction_facing": (attrs.get("CameraTitl") or "WA Camera")[:120],
+                    "media_url": img,
+                    "refresh_rate_seconds": 120,
+                }
+            )
+        return cameras
+
+
+class IllinoisDOTIngestor(BaseCCTVIngestor):
+    """Illinois DOT cameras via ArcGIS FeatureServer (3,400+ cameras)."""
+
+    URL = (
+        "https://services2.arcgis.com/aIrBD8yn1TDTEXoz/arcgis/rest/services/"
+        "TrafficCamerasTM_Public/FeatureServer/0/query"
+    )
+
+    def fetch_data(self) -> List[Dict[str, Any]]:
+        resp = fetch_with_curl(
+            self.URL + "?where=1%3D1"
+            "&outFields=CameraLocation,CameraDirection,SnapShot"
+            "&outSR=4326&f=json",
+            timeout=30,
+        )
+        if not resp or resp.status_code != 200:
+            return []
+        data = resp.json()
+        cameras = []
+        for feat in data.get("features", []):
+            attrs = feat.get("attributes", {})
+            geom = feat.get("geometry", {})
+            lat = geom.get("y")
+            lon = geom.get("x")
+            img = attrs.get("SnapShot") or ""
+            if not (lat and lon and img):
+                continue
+            try:
+                lat, lon = float(lat), float(lon)
+            except (ValueError, TypeError):
+                continue
+            cameras.append({
+                "id": f"IDOT-{len(cameras)}",
+                "source_agency": "Illinois DOT",
+                "lat": lat, "lon": lon,
+                "direction_facing": (
+                    attrs.get("CameraLocation") or attrs.get("CameraDirection") or "IL Camera"
+                )[:120],
+                "media_url": img,
+                "refresh_rate_seconds": 120,
+            })
+        return cameras
+
+
+class MichiganDOTIngestor(BaseCCTVIngestor):
+    """Michigan DOT cameras (775+ cameras). Parses HTML-embedded JSON."""
+
+    URL = "https://mdotjboss.state.mi.us/MiDrive/camera/list"
+
+    def fetch_data(self) -> List[Dict[str, Any]]:
+        import re as _re
+        from urllib.parse import urljoin as _urljoin
+        resp = fetch_with_curl(self.URL, timeout=20)
+        if not resp or resp.status_code != 200:
+            return []
+        data = resp.json()
+        cameras = []
+        for cam in data:
+            county = cam.get("county", "")
+            m = _re.search(r"lat=([\d.-]+)&lon=([\d.-]+)", county)
+            if not m:
+                continue
+            try:
+                lat, lon = float(m.group(1)), float(m.group(2))
+            except (ValueError, TypeError):
+                continue
+            img_m = _re.search(r'src="([^"]+)"', cam.get("image", ""))
+            if not img_m:
+                continue
+            id_m = _re.search(r"id=(\d+)", county)
+            cam_id = id_m.group(1) if id_m else str(len(cameras))
+            media_url = _urljoin(self.URL, img_m.group(1))
+            cameras.append({
+                "id": f"MDOT-{cam_id}",
+                "source_agency": "Michigan DOT",
+                "lat": lat, "lon": lon,
+                "direction_facing": (
+                    f"{cam.get('route', '')} {cam.get('location', '')}".strip() or "MI Camera"
+                )[:120],
+                "media_url": media_url,
+                "refresh_rate_seconds": 120,
+            })
+        return cameras
+
+
+class ColoradoDOTIngestor(BaseCCTVIngestor):
+    """Colorado DOT cameras via the official COtrip camera service."""
+
+    URL = "https://cotg.carsprogram.org/cameras_v1/api/cameras"
+
+    def fetch_data(self) -> List[Dict[str, Any]]:
+        resp = fetch_with_curl(
+            self.URL,
+            timeout=25,
+            headers={"Accept": "application/json"},
+        )
+        if not resp or resp.status_code != 200:
+            logger.warning(f"Colorado DOT camera fetch failed: HTTP {resp.status_code if resp else 'no response'}")
+            return []
+        data = resp.json()
+        cameras = []
+        for item in data if isinstance(data, list) else []:
+            if item.get("public") is False or item.get("active") is False:
+                continue
+            loc = item.get("location", {})
+            lat = loc.get("latitude")
+            lon = loc.get("longitude")
+            if lat is None or lon is None:
+                continue
+            try:
+                lat, lon = float(lat), float(lon)
+            except (ValueError, TypeError):
+                continue
+
+            media_url = ""
+            for view in item.get("views") or []:
+                preview_url = str(view.get("videoPreviewUrl") or "").strip()
+                if preview_url:
+                    media_url = preview_url
+                    break
+            if not media_url:
+                for view in item.get("views") or []:
+                    stream_url = str(view.get("url") or "").strip()
+                    if stream_url and _detect_media_type(stream_url) in {"video", "hls", "mjpeg"}:
+                        media_url = stream_url
+                        break
+            if not media_url:
+                continue
+
+            owner = item.get("cameraOwner", {})
+            cameras.append(
+                {
+                    "id": f"CODOT-{item.get('id')}",
+                    "source_agency": str(owner.get("name") or "Colorado DOT")[:60],
+                    "lat": lat,
+                    "lon": lon,
+                    "direction_facing": str(item.get("name") or loc.get("routeId") or "Colorado Camera")[:120],
+                    "media_url": media_url,
+                    "refresh_rate_seconds": 60,
+                }
+            )
+        return cameras
+
+
+# ─── KML helpers for MadridCityIngestor ──────────────────────────────────────
+
+_KML_NS = {"kml": "http://www.opengis.net/kml/2.2"}
+
+
+def _find_kml_element(element, tag):
+    """Find first descendant matching tag, ignoring XML namespace prefix."""
+    el = element.find(f".//{tag}")
+    if el is not None:
+        return el
+    for child in element.iter():
+        if child.tag.endswith(f"}}{tag}") or child.tag == tag:
+            return child
+    return None
+
+
+def _extract_img_src(html_fragment: str):
+    """Extract src URL from an <img> tag or bare .jpg URL in an HTML fragment."""
+    import re as _re
+    match = _re.search(r'src=["\']([^"\']+)["\']', html_fragment, _re.IGNORECASE)
+    if match:
+        return match.group(1)
+    match = _re.search(r'https?://\S+\.jpg', html_fragment, _re.IGNORECASE)
+    if match:
+        return match.group(0)
+    return None
+
+
+class MadridCityIngestor(BaseCCTVIngestor):
+    """Madrid City Hall traffic cameras from datos.madrid.es KML feed."""
+
+    KML_URL = "http://datos.madrid.es/egob/catalogo/202088-0-trafico-camaras.kml"
+
+    def fetch_data(self) -> List[Dict[str, Any]]:
+        try:
+            response = fetch_with_curl(self.KML_URL, timeout=20)
+            response.raise_for_status()
+        except Exception as e:
+            logger.error(f"MadridCityIngestor: failed to fetch KML: {e}")
+            return []
+
+        try:
+            root = ET.fromstring(response.content)
+        except ET.ParseError as e:
+            logger.error(f"MadridCityIngestor: failed to parse KML: {e}")
+            return []
+
+        cameras = []
+        placemarks = root.findall(".//kml:Placemark", _KML_NS)
+        if not placemarks:
+            placemarks = [el for el in root.iter() if el.tag.endswith("Placemark")]
+
+        for i, placemark in enumerate(placemarks):
+            try:
+                name_el = _find_kml_element(placemark, "name")
+                name = name_el.text.strip() if name_el is not None and name_el.text else f"Madrid Camera {i}"
+
+                coords_el = _find_kml_element(placemark, "coordinates")
+                if coords_el is None or not coords_el.text:
+                    continue
+
+                parts = coords_el.text.strip().split(",")
+                if len(parts) < 2:
+                    continue
+                lon = float(parts[0])
+                lat = float(parts[1])
+
+                desc_el = _find_kml_element(placemark, "description")
+                image_url = None
+                if desc_el is not None and desc_el.text:
+                    image_url = _extract_img_src(desc_el.text)
+
+                if not image_url:
+                    continue
+
+                cameras.append({
+                    "id": f"MAD-{i:04d}",
+                    "source_agency": "Madrid City Hall",
+                    "lat": lat,
+                    "lon": lon,
+                    "direction_facing": name,
+                    "media_url": image_url,
+                    "refresh_rate_seconds": 600,
+                })
+            except (ValueError, TypeError, IndexError) as e:
+                logger.debug(f"MadridCityIngestor: skipping malformed placemark: {e}")
+                continue
+
+        logger.info(f"MadridCityIngestor: parsed {len(cameras)} cameras")
+        return cameras
+
+
 def _detect_media_type(url: str) -> str:
     """Detect the media type from a camera URL for proper frontend rendering."""
     if not url:
@@ -829,4 +1112,41 @@ def get_all_cameras() -> List[Dict[str, Any]]:
         cam['media_type'] = _detect_media_type(cam.get('media_url', ''))
         cameras.append(cam)
     return cameras
+
+
+def run_all_ingestors():
+    """Run all CCTV ingestors synchronously. Used for first-run DB seeding."""
+    ingestors = [
+        TFLJamCamIngestor(),
+        LTASingaporeIngestor(),
+        AustinTXIngestor(),
+        NYCDOTIngestor(),
+        GlobalOSMCrawlingIngestor(),
+        AutobahnIngestor(),
+        CaltransCCTVIngestor(),
+        DigitalTrafficFIIngestor(),
+        HongKongTDIngestor(),
+        QuebecMTQIngestor(),
+        DGTSpainIngestor(),
+        MainRoadsWAIngestor(),
+        WindyWebcamsIngestor(),
+        Alberta511Ingestor(),
+        Manitoba511Ingestor(),
+        Georgia511Ingestor(),
+        Saskatchewan511Ingestor(),
+        QLDTrafficIngestor(),
+        ITrafficSAIngestor(),
+        OHGOIngestor(),
+        # Upstream additions (Task 3 merge)
+        WSDOTIngestor(),
+        IllinoisDOTIngestor(),
+        MichiganDOTIngestor(),
+        ColoradoDOTIngestor(),
+        MadridCityIngestor(),
+    ]
+    for ing in ingestors:
+        try:
+            ing.ingest()
+        except Exception as e:
+            logger.warning(f"Ingestor {ing.__class__.__name__} failed during seed: {e}")
 
