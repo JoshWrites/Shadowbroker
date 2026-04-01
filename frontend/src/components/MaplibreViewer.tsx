@@ -750,6 +750,50 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
         setMapReady(true);
     }, []);
 
+    // WebGL context loss recovery — browser/GPU drops context on sleep/wake
+    const contextLostRef = useRef(false);
+    useEffect(() => {
+        if (!mapReady) return;
+        const canvas = mapRef.current?.getMap()?.getCanvas();
+        if (!canvas) return;
+
+        const handleLost = (e: Event) => {
+            e.preventDefault();
+            contextLostRef.current = true;
+            console.warn('[MaplibreViewer] WebGL context lost');
+        };
+        const handleRestored = () => {
+            contextLostRef.current = false;
+            console.info('[MaplibreViewer] WebGL context restored');
+            mapRef.current?.getMap()?.triggerRepaint();
+        };
+
+        // Fallback: on wake from sleep, if context wasn't restored, force reload
+        const handleVisibility = () => {
+            if (document.visibilityState !== 'visible') return;
+            // Give the browser a moment to restore the context naturally
+            setTimeout(() => {
+                const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+                if (contextLostRef.current || !gl || gl.isContextLost()) {
+                    console.warn('[MaplibreViewer] Context still lost after wake — reloading page');
+                    window.location.reload();
+                } else {
+                    // Context survived but tiles may be stale — force repaint
+                    mapRef.current?.getMap()?.triggerRepaint();
+                }
+            }, 1000);
+        };
+
+        canvas.addEventListener('webglcontextlost', handleLost);
+        canvas.addEventListener('webglcontextrestored', handleRestored);
+        document.addEventListener('visibilitychange', handleVisibility);
+        return () => {
+            canvas.removeEventListener('webglcontextlost', handleLost);
+            canvas.removeEventListener('webglcontextrestored', handleRestored);
+            document.removeEventListener('visibilitychange', handleVisibility);
+        };
+    }, [mapReady]);
+
     // Build a set of tracked icao24s to exclude from other flight layers
     const trackedIcaoSet = useMemo(() => {
         const s = new Set<string>();
