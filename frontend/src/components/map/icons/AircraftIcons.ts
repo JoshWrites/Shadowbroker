@@ -8,6 +8,9 @@ export const svgPlanePurple = `data:image/svg+xml;utf8,${encodeURIComponent(`<sv
 export const svgFighter = `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="yellow" stroke="black"><path d="M12 2L14 8L18 10L14 16L15 22L12 20L9 22L10 16L6 10L10 8L12 2Z"/></svg>`)}`;
 export const svgHeli = `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="yellow" stroke="black"><path d="M10 6L10 14L8 16L8 18L10 17L12 22L14 17L16 18L16 16L14 14L14 6C14 4 13 2 12 2C11 2 10 4 10 6Z"/><circle cx="12" cy="12" r="8" fill="none" stroke="black" stroke-dasharray="2 2" stroke-width="1"/></svg>`)}`;
 export const svgHeliCyan = `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="cyan" stroke="black"><path d="M10 6L10 14L8 16L8 18L10 17L12 22L14 17L16 18L16 16L14 14L14 6C14 4 13 2 12 2C11 2 10 4 10 6Z"/><circle cx="12" cy="12" r="8" fill="none" stroke="cyan" stroke-dasharray="2 2" stroke-width="1"/></svg>`)}`;
+export const svgHeliDimCyan = `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="#0891b2" stroke="black"><path d="M10 6L10 14L8 16L8 18L10 17L12 22L14 17L16 18L16 16L14 14L14 6C14 4 13 2 12 2C11 2 10 4 10 6Z"/><circle cx="12" cy="12" r="8" fill="none" stroke="#0891b2" stroke-dasharray="2 2" stroke-width="1"/></svg>`)}`;
+export const svgHeliSlate = `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="#94a3b8" stroke="black"><path d="M10 6L10 14L8 16L8 18L10 17L12 22L14 17L16 18L16 16L14 14L14 6C14 4 13 2 12 2C11 2 10 4 10 6Z"/><circle cx="12" cy="12" r="8" fill="none" stroke="#94a3b8" stroke-dasharray="2 2" stroke-width="1"/></svg>`)}`;
+export const svgHeliAmber = `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="#f59e0b" stroke="black"><path d="M10 6L10 14L8 16L8 18L10 17L12 22L14 17L16 18L16 16L14 14L14 6C14 4 13 2 12 2C11 2 10 4 10 6Z"/><circle cx="12" cy="12" r="8" fill="none" stroke="#f59e0b" stroke-dasharray="2 2" stroke-width="1"/></svg>`)}`;
 export const svgHeliOrange = `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="#FF8C00" stroke="black"><path d="M10 6L10 14L8 16L8 18L10 17L12 22L14 17L16 18L16 16L14 14L14 6C14 4 13 2 12 2C11 2 10 4 10 6Z"/><circle cx="12" cy="12" r="8" fill="none" stroke="#FF8C00" stroke-dasharray="2 2" stroke-width="1"/></svg>`)}`;
 export const svgHeliPurple = `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="#9B59B6" stroke="black"><path d="M10 6L10 14L8 16L8 18L10 17L12 22L14 17L16 18L16 16L14 14L14 6C14 4 13 2 12 2C11 2 10 4 10 6Z"/><circle cx="12" cy="12" r="8" fill="none" stroke="#9B59B6" stroke-dasharray="2 2" stroke-width="1"/></svg>`)}`;
 export const svgTanker = `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="yellow" stroke="black"><path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z" /><line x1="12" y1="20" x2="12" y2="24" stroke="yellow" stroke-width="2" /></svg>`)}`;
@@ -97,9 +100,12 @@ export const POTUS_ICAOS = new Set([
 
 // Pre-built aircraft SVGs by type & color
 export const svgAirlinerCyan = makeAircraftSvg('airliner', 'cyan');
+export const svgAirlinerDimCyan = makeAircraftSvg('airliner', '#0891b2');
 export const svgAirlinerOrange = makeAircraftSvg('airliner', '#FF8C00');
 export const svgAirlinerPurple = makeAircraftSvg('airliner', '#9B59B6');
+export const svgAirlinerSlate = makeAircraftSvg('airliner', '#94a3b8');
 export const svgAirlinerYellow = makeAircraftSvg('airliner', 'yellow');
+export const svgAirlinerAmber = makeAircraftSvg('airliner', '#f59e0b');
 export const svgAirlinerPink = makeAircraftSvg('airliner', '#FF1493', 'black', 22);
 export const svgAirlinerRed = makeAircraftSvg('airliner', '#FF2020', 'black', 22);
 export const svgAirlinerDarkBlue = makeAircraftSvg('airliner', '#1A3A8A', '#4A80D0', 22);
@@ -109,9 +115,12 @@ export const svgAirlinerBlack = makeAircraftSvg('airliner', '#222', '#555', 22);
 export const svgAirlinerWhite = makeAircraftSvg('airliner', 'white', '#666', 22);
 
 export const svgTurbopropCyan = makeAircraftSvg('turboprop', 'cyan');
+export const svgTurbopropDimCyan = makeAircraftSvg('turboprop', '#0891b2');
 export const svgTurbopropOrange = makeAircraftSvg('turboprop', '#FF8C00');
 export const svgTurbopropPurple = makeAircraftSvg('turboprop', '#9B59B6');
+export const svgTurbopropSlate = makeAircraftSvg('turboprop', '#94a3b8');
 export const svgTurbopropYellow = makeAircraftSvg('turboprop', 'yellow');
+export const svgTurbopropAmber = makeAircraftSvg('turboprop', '#f59e0b');
 export const svgTurbopropPink = makeAircraftSvg('turboprop', '#FF1493', 'black', 22);
 export const svgTurbopropRed = makeAircraftSvg('turboprop', '#FF2020', 'black', 22);
 export const svgTurbopropDarkBlue = makeAircraftSvg('turboprop', '#1A3A8A', '#4A80D0', 22);
@@ -121,9 +130,12 @@ export const svgTurbopropBlack = makeAircraftSvg('turboprop', '#222', '#555', 22
 export const svgTurbopropWhite = makeAircraftSvg('turboprop', 'white', '#666', 22);
 
 export const svgBizjetCyan = makeAircraftSvg('bizjet', 'cyan');
+export const svgBizjetDimCyan = makeAircraftSvg('bizjet', '#0891b2');
 export const svgBizjetOrange = makeAircraftSvg('bizjet', '#FF8C00');
 export const svgBizjetPurple = makeAircraftSvg('bizjet', '#9B59B6');
+export const svgBizjetSlate = makeAircraftSvg('bizjet', '#94a3b8');
 export const svgBizjetYellow = makeAircraftSvg('bizjet', 'yellow');
+export const svgBizjetAmber = makeAircraftSvg('bizjet', '#f59e0b');
 export const svgBizjetPink = makeAircraftSvg('bizjet', '#FF1493', 'black', 22);
 export const svgBizjetRed = makeAircraftSvg('bizjet', '#FF2020', 'black', 22);
 export const svgBizjetDarkBlue = makeAircraftSvg('bizjet', '#1A3A8A', '#4A80D0', 22);
@@ -142,8 +154,9 @@ export const svgHeliGrey = `data:image/svg+xml;utf8,${encodeURIComponent(`<svg x
 export const GROUNDED_ICON_MAP: Record<string, string> = { heli: 'svgHeliGrey', turboprop: 'svgTurbopropGrey', bizjet: 'svgBizjetGrey', airliner: 'svgAirlinerGrey' };
 
 // Per-layer color maps (module-level to avoid re-allocation every render tick)
-export const COLOR_MAP_COMMERCIAL: Record<string, string> = { heli: 'svgHeliCyan', turboprop: 'svgTurbopropCyan', bizjet: 'svgBizjetCyan', airliner: 'svgAirlinerCyan' };
-export const COLOR_MAP_PRIVATE: Record<string, string> = { heli: 'svgHeliOrange', turboprop: 'svgTurbopropOrange', bizjet: 'svgBizjetOrange', airliner: 'svgAirlinerOrange' };
+// 3-tier hierarchy: Baseline (dim cyan/slate) → Watch (amber) → Critical (red/gold/pink)
+export const COLOR_MAP_COMMERCIAL: Record<string, string> = { heli: 'svgHeliDimCyan', turboprop: 'svgTurbopropDimCyan', bizjet: 'svgBizjetDimCyan', airliner: 'svgAirlinerDimCyan' };
+export const COLOR_MAP_PRIVATE: Record<string, string> = { heli: 'svgHeliPurple', turboprop: 'svgTurbopropPurple', bizjet: 'svgBizjetPurple', airliner: 'svgAirlinerPurple' };
 export const COLOR_MAP_JETS: Record<string, string> = { heli: 'svgHeliPurple', turboprop: 'svgTurbopropPurple', bizjet: 'svgBizjetPurple', airliner: 'svgAirlinerPurple' };
-export const COLOR_MAP_MILITARY: Record<string, string> = { heli: 'svgHeli', turboprop: 'svgTurbopropYellow', bizjet: 'svgBizjetYellow', airliner: 'svgAirlinerYellow' };
+export const COLOR_MAP_MILITARY: Record<string, string> = { heli: 'svgHeliAmber', turboprop: 'svgTurbopropAmber', bizjet: 'svgBizjetAmber', airliner: 'svgAirlinerAmber' };
 export const MIL_SPECIAL_MAP: Record<string, string> = { fighter: 'svgFighter', tanker: 'svgTanker', recon: 'svgRecon' };

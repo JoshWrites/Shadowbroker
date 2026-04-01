@@ -14,7 +14,9 @@ from cachetools import TTLCache
 from services.network_utils import fetch_with_curl
 from services.fetchers._store import latest_data, _data_lock, _mark_fresh
 from services.fetchers.plane_alert import enrich_with_plane_alert, enrich_with_tracked_names
+from services.fetchers.emissions import get_emissions_info
 from services.fetchers.retry import with_retry
+from services.constants import GPS_JAMMING_NACP_THRESHOLD, GPS_JAMMING_MIN_RATIO, GPS_JAMMING_MIN_AIRCRAFT
 
 logger = logging.getLogger("services.data_fetcher")
 
@@ -342,6 +344,12 @@ def _classify_and_publish(all_adsb_flights):
     for f in flights:
         enrich_with_plane_alert(f)
         enrich_with_tracked_names(f)
+        # Attach fuel-burn / CO2 emissions estimate when model is known
+        model = f.get("model")
+        if model:
+            emi = get_emissions_info(model)
+            if emi:
+                f["emissions"] = emi
 
         callsign = f.get('callsign', '').strip().upper()
         is_commercial_format = bool(re.match(r'^[A-Z]{3}\d{1,4}[A-Z]{0,2}$', callsign))
@@ -494,6 +502,17 @@ def _classify_and_publish(all_adsb_flights):
     logger.info(f"Trail accumulation: {trail_count} active trails, {len(stale_keys)} pruned, {len(flight_trails)} total")
 
     # --- GPS Jamming Detection ---
+    # Uses NACp (Navigation Accuracy Category – Position) from ADS-B to infer
+    # GPS interference zones, similar to GPSJam.org / Flightradar24.
+    # NACp < 8 = position accuracy worse than the FAA-mandated 0.05 NM.
+    #
+    # Denoising (to suppress false positives from old GA transponders):
+    # 1. Skip nac_p == 0 ("unknown accuracy") — old transponders that never
+    #    computed accuracy, NOT evidence of jamming.  Real jamming shows 1-7.
+    # 2. Require minimum aircraft per grid cell for statistical validity.
+    # 3. Subtract 1 from degraded count per cell (GPSJam's technique) so a
+    #    single quirky transponder can't flag an entire zone.
+    # 4. Require the adjusted ratio to exceed the threshold.
     try:
         jamming_grid = {}
         raw_flights = latest_data.get('flights', [])
@@ -503,21 +522,24 @@ def _classify_and_publish(all_adsb_flights):
             if rlat is None or rlng is None:
                 continue
             nacp = rf.get('nac_p')
-            if nacp is None:
+            if nacp is None or nacp == 0:
                 continue
             grid_key = f"{int(rlat)},{int(rlng)}"
             if grid_key not in jamming_grid:
                 jamming_grid[grid_key] = {"degraded": 0, "total": 0}
             jamming_grid[grid_key]["total"] += 1
-            if nacp < 8:
+            if nacp < GPS_JAMMING_NACP_THRESHOLD:
                 jamming_grid[grid_key]["degraded"] += 1
 
         jamming_zones = []
         for gk, counts in jamming_grid.items():
-            if counts["total"] < 3:
+            if counts["total"] < GPS_JAMMING_MIN_AIRCRAFT:
                 continue
-            ratio = counts["degraded"] / counts["total"]
-            if ratio > 0.25:
+            adjusted_degraded = max(counts["degraded"] - 1, 0)
+            if adjusted_degraded == 0:
+                continue
+            ratio = adjusted_degraded / counts["total"]
+            if ratio > GPS_JAMMING_MIN_RATIO:
                 lat_i, lng_i = gk.split(",")
                 severity = "low" if ratio < 0.5 else "medium" if ratio < 0.75 else "high"
                 jamming_zones.append({

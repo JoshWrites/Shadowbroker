@@ -204,9 +204,30 @@ def _fetch_satellites_from_tle_api():
 
 
 def fetch_satellites():
+    from services.fetchers._store import is_any_active
+
+    if not is_any_active("satellites"):
+        return
     sats = []
     try:
         now_ts = time.time()
+
+        # On first call, try disk cache before hitting CelesTrak
+        if _sat_gp_cache["data"] is None:
+            disk_data = _load_sat_cache()
+            if disk_data:
+                import os
+                cache_mtime = (
+                    os.path.getmtime(str(_SAT_CACHE_PATH)) if _SAT_CACHE_PATH.exists() else 0
+                )
+                _sat_gp_cache["data"] = disk_data
+                _sat_gp_cache["last_fetch"] = cache_mtime  # real fetch time so 24h check works
+                _sat_gp_cache["source"] = "disk_cache"
+                logger.info(
+                    f"Satellites: Bootstrapped from disk cache ({len(disk_data)} records, "
+                    f"{(now_ts - cache_mtime) / 3600:.1f}h old)"
+                )
+
         if _sat_gp_cache["data"] is None or (now_ts - _sat_gp_cache["last_fetch"]) > _CELESTRAK_FETCH_INTERVAL:
             gp_urls = [
                 "https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=json",

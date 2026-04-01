@@ -11,7 +11,8 @@ DEFAULT_TRAIL_TTL_S = 300             # 5 min - trail TTL for non-tracked flight
 HOLD_PATTERN_DEGREES = 300            # Total heading change to flag holding pattern
 GPS_JAMMING_NACP_THRESHOLD = 8        # NACp below this = degraded GPS signal
 GPS_JAMMING_GRID_SIZE = 1.0           # 1 degree grid for aggregation
-GPS_JAMMING_MIN_RATIO = 0.25          # 25% degraded aircraft to flag zone
+GPS_JAMMING_MIN_RATIO = 0.30          # 30% degraded aircraft to flag zone
+GPS_JAMMING_MIN_AIRCRAFT = 5          # Min aircraft in grid cell for statistical significance
 
 # ─── Network & Circuit Breaker ──────────────────────────────────────────────
 CIRCUIT_BREAKER_TTL_S = 120           # Skip domain for 2 min after total failure

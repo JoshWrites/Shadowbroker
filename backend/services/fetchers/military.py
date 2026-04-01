@@ -137,13 +137,41 @@ def _classify_uav(model: str, callsign: str):
 
 
 def fetch_military_flights():
+    from services.fetchers._store import is_any_active
+
+    if not is_any_active("military"):
+        return
     military_flights = []
     detected_uavs = []
+    # Fetch from primary + supplemental military endpoints
+    all_mil_ac = []
+    seen_hex = set()
     try:
         url = "https://api.adsb.lol/v2/mil"
         response = fetch_with_curl(url, timeout=10)
         if response.status_code == 200:
-            ac = response.json().get('ac', [])
+            for a in response.json().get('ac', []):
+                h = a.get("hex", "").lower()
+                if h and h not in seen_hex:
+                    seen_hex.add(h)
+                    all_mil_ac.append(a)
+    except Exception as e:
+        logger.warning(f"adsb.lol mil fetch failed: {e}")
+    # Supplemental: airplanes.live military endpoint
+    try:
+        resp2 = fetch_with_curl("https://api.airplanes.live/v2/mil", timeout=10)
+        if resp2.status_code == 200:
+            for a in resp2.json().get('ac', []):
+                h = a.get("hex", "").lower()
+                if h and h not in seen_hex:
+                    seen_hex.add(h)
+                    all_mil_ac.append(a)
+            logger.info(f"airplanes.live mil: +{len(resp2.json().get('ac', []))} raw, {len(all_mil_ac)} total unique")
+    except Exception as e:
+        logger.debug(f"airplanes.live mil supplemental failed: {e}")
+    try:
+        if all_mil_ac:
+            ac = all_mil_ac
             for f in ac:
                 try:
                     lat = f.get("lat")
