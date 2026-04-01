@@ -70,6 +70,7 @@ body {
 
 .styled-scrollbar {
   scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
 /* Map popup shared utilities */
@@ -199,4 +200,145 @@ body {
 /* Keep popups fully bright and interactive above the dimmed canvas */
 .map-focus-active .maplibregl-popup {
   z-index: 10 !important;
+}
+
+/* Global interactive cursor hints */
+button:not(:disabled),
+[role='button']:not([aria-disabled='true']),
+a[href],
+summary,
+label[for],
+input[type='button']:not(:disabled),
+input[type='submit']:not(:disabled),
+input[type='reset']:not(:disabled) {
+  cursor: pointer;
+}
+
+button:disabled,
+[role='button'][aria-disabled='true'],
+input:disabled,
+select:disabled,
+textarea:disabled {
+  cursor: not-allowed;
+}
+
+/* DOS block cursor blink */
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+/* ── TERMINAL UTILITY CLASSES ── */
+
+/* Subtle text glow for cyan headings */
+.text-glow {
+  text-shadow: 0 0 10px rgba(34, 211, 238, 0.45), 0 0 20px rgba(34, 211, 238, 0.15);
+}
+
+/* Terminal input — prompt style */
+.terminal-input {
+  border-radius: 0;
+  border: 1px solid rgba(8, 145, 178, 0.35);
+  background: rgba(10, 10, 10, 0.5);
+}
+.terminal-input:focus {
+  border-color: rgba(34, 211, 238, 0.5);
+  box-shadow: 0 0 8px rgba(34, 211, 238, 0.2);
+  outline: none;
+}
+
+/* ── INFONET CRT TERMINAL EFFECTS ── */
+
+.infonet-font {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+}
+
+/* CRT scanline overlay — scoped to .crt containers only */
+.crt {
+  position: relative;
+  animation: crt-flicker 0.15s infinite;
+  text-shadow: 0 0 2px rgba(255, 255, 255, 0.2);
+}
+
+.crt::before {
+  content: ' ';
+  display: block;
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  right: 0;
+  background:
+    linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%),
+    linear-gradient(
+      90deg,
+      rgba(255, 0, 0, 0.06),
+      rgba(0, 255, 0, 0.02),
+      rgba(0, 0, 255, 0.06)
+    );
+  z-index: 2;
+  background-size: 100% 2px, 3px 100%;
+  pointer-events: none;
+}
+
+@keyframes crt-flicker {
+  0% {
+    opacity: 0.95;
+  }
+  5% {
+    opacity: 0.85;
+  }
+  10% {
+    opacity: 0.95;
+  }
+  15% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .crt {
+    animation: none;
+  }
+  .crt::before {
+    display: none;
+  }
+}
+
+/* Ticker animation for InfoNet */
+@keyframes infonet-ticker {
+  0% {
+    transform: translateX(100%);
+  }
+  100% {
+    transform: translateX(-100%);
+  }
+}
+
+.animate-ticker {
+  display: inline-block;
+  white-space: nowrap;
+  animation: infonet-ticker 90s linear infinite;
+}
+
+/* Scoped scrollbar for CRT terminal */
+.crt ::-webkit-scrollbar {
+  width: 8px;
+}
+.crt ::-webkit-scrollbar-track {
+  background: #0a0a0a;
+}
+.crt ::-webkit-scrollbar-thumb {
+  background: #4b5563;
+}
+.crt ::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
 }
