@@ -1,14 +1,9 @@
 {
   "feeds": [
     {
-      "name": "NPR",
-      "url": "https://feeds.npr.org/1004/rss.xml",
-      "weight": 4
-    },
-    {
-      "name": "BBC",
-      "url": "http://feeds.bbci.co.uk/news/world/rss.xml",
-      "weight": 3
+      "name": "AP News",
+      "url": "https://rsshub.app/apnews/topics/world-news",
+      "weight": 5
     },
     {
       "name": "AlJazeera",
@@ -16,73 +11,23 @@
       "weight": 2
     },
     {
-      "name": "NYT",
-      "url": "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
-      "weight": 1
-    },
-    {
-      "name": "GDACS",
-      "url": "https://www.gdacs.org/xml/rss.xml",
-      "weight": 5
-    },
-    {
-      "name": "NHK",
-      "url": "https://www3.nhk.or.jp/nhkworld/rss/world.xml",
+      "name": "Asia Times",
+      "url": "https://asiatimes.com/feed/",
       "weight": 3
+    },
+    {
+      "name": "BBC",
+      "url": "http://feeds.bbci.co.uk/news/world/rss.xml",
+      "weight": 3
+    },
+    {
+      "name": "Bellingcat",
+      "url": "https://www.bellingcat.com/feed/",
+      "weight": 4
     },
     {
       "name": "CNA",
       "url": "https://www.channelnewsasia.com/rssfeed/8395986",
-      "weight": 3
-    },
-    {
-      "name": "Mercopress",
-      "url": "https://en.mercopress.com/rss/",
-      "weight": 3
-    },
-    {
-      "name": "FocusTaiwan",
-      "url": "https://focustaiwan.tw/rss",
-      "weight": 5
-    },
-    {
-      "name": "Kyodo",
-      "url": "https://english.kyodonews.net/rss/news.xml",
-      "weight": 4
-    },
-    {
-      "name": "SCMP",
-      "url": "https://www.scmp.com/rss/91/feed",
-      "weight": 4
-    },
-    {
-      "name": "The Diplomat",
-      "url": "https://thediplomat.com/feed/",
-      "weight": 4
-    },
-    {
-      "name": "Stars and Stripes",
-      "url": "https://www.stripes.com/feeds/pacific.rss",
-      "weight": 4
-    },
-    {
-      "name": "Yonhap",
-      "url": "https://en.yna.co.kr/RSS/news.xml",
-      "weight": 4
-    },
-    {
-      "name": "Nikkei Asia",
-      "url": "https://asia.nikkei.com/rss",
-      "weight": 3
-    },
-    {
-      "name": "Taipei Times",
-      "url": "https://www.taipeitimes.com/xml/pda.rss",
-      "weight": 4
-    },
-    {
-      "name": "Asia Times",
-      "url": "https://asiatimes.com/feed/",
       "weight": 3
     },
     {
@@ -91,9 +36,99 @@
       "weight": 3
     },
     {
+      "name": "FocusTaiwan",
+      "url": "https://focustaiwan.tw/rss",
+      "weight": 5
+    },
+    {
+      "name": "GDACS",
+      "url": "https://www.gdacs.org/xml/rss.xml",
+      "weight": 5
+    },
+    {
+      "name": "Guardian",
+      "url": "https://www.theguardian.com/world/rss",
+      "weight": 3
+    },
+    {
       "name": "Japan Times",
       "url": "https://www.japantimes.co.jp/feed/",
       "weight": 3
+    },
+    {
+      "name": "Kyodo",
+      "url": "https://english.kyodonews.net/rss/news.xml",
+      "weight": 4
+    },
+    {
+      "name": "Mercopress",
+      "url": "https://en.mercopress.com/rss/",
+      "weight": 3
+    },
+    {
+      "name": "NHK",
+      "url": "https://www3.nhk.or.jp/nhkworld/rss/world.xml",
+      "weight": 3
+    },
+    {
+      "name": "NPR",
+      "url": "https://feeds.npr.org/1004/rss.xml",
+      "weight": 4
+    },
+    {
+      "name": "NYT",
+      "url": "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
+      "weight": 1
+    },
+    {
+      "name": "Nikkei Asia",
+      "url": "https://asia.nikkei.com/rss",
+      "weight": 3
+    },
+    {
+      "name": "Reuters",
+      "url": "https://www.reutersagency.com/feed/?best-topics=world",
+      "weight": 5
+    },
+    {
+      "name": "SCMP",
+      "url": "https://www.scmp.com/rss/91/feed",
+      "weight": 4
+    },
+    {
+      "name": "Stars and Stripes",
+      "url": "https://www.stripes.com/feeds/pacific.rss",
+      "weight": 4
+    },
+    {
+      "name": "TASS",
+      "url": "https://tass.com/rss/v2.xml",
+      "weight": 2
+    },
+    {
+      "name": "Taipei Times",
+      "url": "https://www.taipeitimes.com/xml/pda.rss",
+      "weight": 4
+    },
+    {
+      "name": "The Diplomat",
+      "url": "https://thediplomat.com/feed/",
+      "weight": 4
+    },
+    {
+      "name": "The War Zone",
+      "url": "https://www.twz.com/feed",
+      "weight": 4
+    },
+    {
+      "name": "Xinhua",
+      "url": "http://www.news.cn/english/rss/worldrss.xml",
+      "weight": 2
+    },
+    {
+      "name": "Yonhap",
+      "url": "https://en.yna.co.kr/RSS/news.xml",
+      "weight": 4
     }
   ]
 }
