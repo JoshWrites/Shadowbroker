@@ -2,9 +2,12 @@
 // Extracted from MaplibreViewer to reduce component size and enable unit testing.
 // Each function takes data arrays + optional helpers and returns a GeoJSON FeatureCollection or null.
 
-import type { Earthquake, GPSJammingZone, FireHotspot, InternetOutage, DataCenter, MilitaryBase, MilBaseBranch, GDELTIncident, LiveUAmapIncident, CCTVCamera, KiwiSDR, FrontlineGeoJSON, UAV, Satellite, Ship, Train, ActiveLayers } from "@/types/dashboard";
+import type { Earthquake, GPSJammingZone, FireHotspot, InternetOutage, DataCenter, PowerPlant, VIIRSChangeNode, MilitaryBase, MilBaseBranch, DashboardData, GDELTIncident, LiveUAmapIncident, CCTVCamera, KiwiSDR, PSKSpot, SatNOGSStation, TinyGSSatellite, Scanner, FrontlineGeoJSON, UAV, Flight, Satellite, Ship, Train, ActiveLayers, SelectedEntity, UkraineAlert, WeatherAlert, AirQualityStation, Volcano, FishingEvent, SigintSignal, CorrelationAlert } from "@/types/dashboard";
 import { classifyAircraft } from "@/utils/aircraftClassification";
 import { MISSION_COLORS, MISSION_ICON_MAP } from "@/components/map/icons/SatelliteIcons";
+import { weatherIconId } from "@/components/map/icons/AircraftIcons";
+import { interpolatePosition, projectPoint } from "@/utils/positioning";
+import type { ShodanSearchMatch } from "@/types/shodan";
 
 type FC = GeoJSON.FeatureCollection | null;
 type InViewFilter = (lat: number, lng: number) => boolean;
@@ -515,5 +518,672 @@ export function buildCarriersGeoJSON(ships: Ship[] | undefined): FC {
                 geometry: { type: 'Point', coordinates: [s.lng, s.lat] }
             };
         }).filter(Boolean) as GeoJSON.Feature[]
+    };
+}
+
+// ─── Shared Entity Lookup ───────────────────────────────────────────────────
+
+/** Find the currently selected entity across all data arrays. DRYs the polymorphic lookup. */
+export function findSelectedEntity(
+    selectedEntity: SelectedEntity | null,
+    data?: DashboardData | null,
+): Flight | Ship | null {
+    if (!selectedEntity || !data) return null;
+    const id = selectedEntity.id;
+    switch (selectedEntity.type) {
+        case 'flight':
+            return data.commercial_flights?.find((f) => f.icao24 === id) || null;
+        case 'private_flight':
+            return data.private_flights?.find((f) => f.icao24 === id) || null;
+        case 'military_flight':
+            return data.military_flights?.find((f) => f.icao24 === id) || null;
+        case 'private_jet':
+            return data.private_jets?.find((f) => f.icao24 === id) || null;
+        case 'tracked_flight':
+            return data.tracked_flights?.find((f) => f.icao24 === id) || null;
+        case 'ship':
+            return data.ships?.find((s) => s.mmsi === id) || null;
+        case 'uav':
+            return data.uavs?.find((u) => u.id === id) || null;
+        default:
+            return null;
+    }
+}
+
+// ─── Predictive Vector ──────────────────────────────────────────────────────
+
+/** Build a dotted line projecting forward ~5 minutes from the entity's current heading + speed. */
+type PredictiveEntity = {
+    lat: number;
+    lng: number;
+    true_track?: number;
+    cog?: number;
+    heading?: number;
+    speed_knots?: number | null;
+    sog?: number | null;
+    alt?: number | null;
+};
+
+export function buildPredictiveGeoJSON(entity: PredictiveEntity | null): FC {
+    if (!entity || entity.lat == null || entity.lng == null) return null;
+    const heading = entity.true_track || entity.cog || entity.heading;
+    const speed = entity.speed_knots || entity.sog;
+    if (!heading && heading !== 0) return null;
+    if (!speed || speed <= 0) return null;
+    // Skip grounded aircraft
+    if (entity.alt != null && entity.alt <= 100 && !entity.sog) return null;
+
+    const steps = [60, 120, 180, 240, 300]; // 1–5 minutes
+    const coords: [number, number][] = [[entity.lng, entity.lat]];
+    for (const dt of steps) {
+        const [lat, lng] = interpolatePosition(entity.lat, entity.lng, heading, speed, dt, 0, 600);
+        coords.push([lng, lat]);
+    }
+
+    const endCoord = coords[coords.length - 1];
+    return {
+        type: 'FeatureCollection' as const,
+        features: [
+            {
+                type: 'Feature' as const,
+                properties: { type: 'predictive-line' },
+                geometry: { type: 'LineString' as const, coordinates: coords },
+            },
+            {
+                type: 'Feature' as const,
+                properties: { type: 'predictive-endpoint' },
+                geometry: { type: 'Point' as const, coordinates: endCoord },
+            },
+        ],
+    };
+}
+
+// ─── Proximity Rings ────────────────────────────────────────────────────────
+
+const NM_TO_METERS = 1852;
+
+/** Build concentric range ring LineStrings at specified nautical-mile radii. */
+export function buildProximityRingsGeoJSON(lat: number, lng: number, radiiNm: number[]): FC {
+    const features = radiiNm.map((nm) => {
+        const distMeters = nm * NM_TO_METERS;
+        const coords: [number, number][] = [];
+        const segments = 64;
+        for (let i = 0; i <= segments; i++) {
+            const bearing = (i / segments) * 360;
+            const [pLat, pLng] = projectPoint(lat, lng, bearing, distMeters);
+            coords.push([pLng, pLat]);
+        }
+        return {
+            type: 'Feature' as const,
+            properties: { radius_nm: nm, label: `${nm}nm` },
+            geometry: { type: 'LineString' as const, coordinates: coords },
+        };
+    });
+    return { type: 'FeatureCollection' as const, features: features as GeoJSON.Feature[] };
+}
+
+// ─── Correlation Alerts (Emergent Intelligence) ────────────────────────────
+
+export function buildCorrelationsGeoJSON(alerts?: CorrelationAlert[]): FC {
+    if (!alerts?.length) return null;
+    return {
+        type: 'FeatureCollection' as const,
+        features: alerts.map((a, i) => {
+            const half = (a.cell_size || 2) / 2;
+            const opacityMap: Record<string, Record<string, number>> = {
+                rf_anomaly: { high: 0.40, medium: 0.25, low: 0.15 },
+                military_buildup: { high: 0.40, medium: 0.25, low: 0.15 },
+                infra_cascade: { high: 0.45, medium: 0.30, low: 0.20 },
+            };
+            return {
+                type: 'Feature' as const,
+                properties: {
+                    id: i,
+                    corr_type: a.type,
+                    severity: a.severity,
+                    score: a.score,
+                    drivers: (a.drivers || []).join(' + '),
+                    opacity: opacityMap[a.type]?.[a.severity] ?? 0.2,
+                },
+                geometry: {
+                    type: 'Polygon' as const,
+                    coordinates: [[
+                        [a.lng - half, a.lat - half],
+                        [a.lng + half, a.lat - half],
+                        [a.lng + half, a.lat + half],
+                        [a.lng - half, a.lat + half],
+                        [a.lng - half, a.lat - half],
+                    ]],
+                },
+            };
+        }),
+    };
+}
+
+// ─── PSK Reporter Spots ─────────────────────────────────────────────────────
+
+export function buildPskReporterGeoJSON(spots?: PSKSpot[], inView?: InViewFilter): FC {
+    if (!spots?.length) return null;
+    return {
+        type: 'FeatureCollection' as const,
+        features: spots
+            .filter((s) => s.lat != null && s.lon != null && (!inView || inView(s.lat, s.lon)))
+            .map((s, i) => ({
+                type: 'Feature' as const,
+                properties: {
+                    id: i,
+                    type: 'psk_spot',
+                    sender: s.sender || '',
+                    receiver: s.receiver || '',
+                    frequency: s.frequency || 0,
+                    mode: s.mode || 'FT8',
+                    snr: s.snr || 0,
+                    time: s.time || '',
+                    lat: s.lat,
+                    lon: s.lon,
+                },
+                geometry: { type: 'Point' as const, coordinates: [s.lon, s.lat] },
+            })),
+    };
+}
+
+// ─── SatNOGS Ground Stations ────────────────────────────────────────────────
+
+export function buildSatnogsStationsGeoJSON(stations?: SatNOGSStation[], inView?: InViewFilter): FC {
+    if (!stations?.length) return null;
+    return {
+        type: 'FeatureCollection' as const,
+        features: stations
+            .filter((s) => s.lat != null && s.lng != null && (!inView || inView(s.lat, s.lng)))
+            .map((s) => ({
+                type: 'Feature' as const,
+                properties: {
+                    id: s.id,
+                    type: 'satnogs_station',
+                    name: s.name || 'Unknown Station',
+                    antenna: s.antenna || '',
+                    observations: s.observations || 0,
+                    last_seen: s.last_seen || '',
+                    lat: s.lat,
+                    lng: s.lng,
+                },
+                geometry: { type: 'Point' as const, coordinates: [s.lng, s.lat] },
+            })),
+    };
+}
+
+// ─── TinyGS LoRa Satellites ────────────────────────────────────────────────
+
+export function buildTinygsGeoJSON(
+    sats?: TinyGSSatellite[],
+    inView?: InViewFilter,
+    interpTinygs?: (s: TinyGSSatellite) => [number, number],
+): FC {
+    if (!sats?.length) return null;
+    return {
+        type: 'FeatureCollection' as const,
+        features: sats
+            .map((s, i) => {
+                if (s.lat == null || s.lng == null) return null;
+                const coords = interpTinygs ? interpTinygs(s) : [s.lng, s.lat] as [number, number];
+                if (inView && !inView(coords[1], coords[0])) return null;
+                return {
+                    type: 'Feature' as const,
+                    properties: {
+                        id: i,
+                        type: 'tinygs_satellite',
+                        name: s.name || 'Unknown Satellite',
+                        status: s.status || '',
+                        modulation: s.modulation || '',
+                        frequency: s.frequency || '',
+                        alt_km: s.alt_km || 0,
+                        sgp4_propagated: s.sgp4_propagated || false,
+                        tinygs_confirmed: s.tinygs_confirmed || false,
+                        lat: s.lat,
+                        lng: s.lng,
+                    },
+                    geometry: { type: 'Point' as const, coordinates: coords },
+                };
+            })
+            .filter(Boolean) as GeoJSON.Feature[],
+    };
+}
+
+// ─── Police Scanners (OpenMHZ) ──────────────────────────────────────────────
+
+export function buildScannerGeoJSON(scanners?: Scanner[], inView?: InViewFilter): FC {
+    if (!scanners?.length) return null;
+    return {
+        type: 'FeatureCollection' as const,
+        features: scanners
+            .filter((s) => s.lat != null && s.lng != null && (!inView || inView(s.lat, s.lng)))
+            .map((s, i) => ({
+                type: 'Feature' as const,
+                properties: {
+                    id: s.shortName || `scanner-${i}`,
+                    type: 'scanner',
+                    name: s.name || 'Unknown Scanner',
+                    shortName: s.shortName || '',
+                    city: s.city || '',
+                    state: s.state || '',
+                    clientCount: s.clientCount || 0,
+                    description: s.description || '',
+                    lat: s.lat,
+                    lng: s.lng,
+                },
+                geometry: { type: 'Point' as const, coordinates: [s.lng, s.lat] },
+            })),
+    };
+}
+
+// ─── Power Plants ──────────────────────────────────────────────────────────
+
+export function buildPowerPlantsGeoJSON(plants?: PowerPlant[]): FC {
+    if (!plants?.length) return null;
+    return {
+        type: 'FeatureCollection',
+        features: plants.map((p, i) => ({
+            type: 'Feature' as const,
+            properties: {
+                id: `pp-${i}`,
+                type: 'power_plant',
+                name: p.name || 'Unknown',
+                country: p.country || '',
+                fuel_type: p.fuel_type || 'Unknown',
+                capacity_mw: p.capacity_mw ?? 0,
+                owner: p.owner || '',
+            },
+            geometry: { type: 'Point' as const, coordinates: [p.lng, p.lat] }
+        }))
+    };
+}
+
+// ─── VIIRS Change Nodes ────────────────────────────────────────────────────
+
+const VIIRS_SEVERITY_COLORS: Record<string, string> = {
+    severe: '#ef4444',
+    high: '#f97316',
+    moderate: '#eab308',
+    growth: '#22c55e',
+    rapid_growth: '#06b6d4',
+};
+
+export function buildVIIRSChangeNodesGeoJSON(nodes?: VIIRSChangeNode[]): FC {
+    if (!nodes?.length) return null;
+    return {
+        type: 'FeatureCollection',
+        features: nodes.map((n, i) => ({
+            type: 'Feature' as const,
+            properties: {
+                id: `viirs-${i}`,
+                type: 'viirs_change_node',
+                severity: n.severity,
+                mean_change_pct: n.mean_change_pct,
+                aoi_name: n.aoi_name,
+                color: VIIRS_SEVERITY_COLORS[n.severity] || '#888888',
+            },
+            geometry: { type: 'Point' as const, coordinates: [n.lng, n.lat] },
+        })),
+    };
+}
+
+// ─── Shodan Overlay ────────────────────────────────────────────────────────
+
+export function buildShodanGeoJSON(results?: ShodanSearchMatch[]): FC {
+    if (!results?.length) return null;
+    return {
+        type: 'FeatureCollection' as const,
+        features: results
+            .filter((item) => item.lat != null && item.lng != null)
+            .map((item) => ({
+                type: 'Feature' as const,
+                properties: {
+                    type: 'shodan_host',
+                    name: `${item.ip}${item.port ? `:${item.port}` : ''}`,
+                    ...item,
+                    source: 'Shodan',
+                },
+                geometry: { type: 'Point' as const, coordinates: [item.lng as number, item.lat as number] },
+            })),
+    };
+}
+
+// ─── SIGINT GeoJSON ──────────────────────────────────────────────────────────
+
+function buildSigintFeature(sig: SigintSignal): GeoJSON.Feature | null {
+    if (sig.lat == null || sig.lng == null) return null;
+    return {
+        type: 'Feature' as const,
+        properties: {
+            id: `${sig.source || 'unknown'}:${sig.callsign || 'unknown'}`,
+            type: 'sigint',
+            name: sig.callsign,
+            callsign: sig.callsign,
+            source: sig.source,
+            confidence: sig.confidence,
+            raw_message: sig.raw_message || '',
+            snr: sig.snr ?? null,
+            frequency: sig.frequency ?? null,
+            timestamp: sig.timestamp,
+            region: sig.region ?? null,
+            channel: sig.channel ?? null,
+            status: sig.status ?? null,
+            altitude: sig.altitude ?? null,
+            emergency: sig.emergency ?? false,
+            emergency_keyword: sig.emergency_keyword ?? null,
+            // Meshtastic map API fields
+            from_api: sig.from_api ?? false,
+            position_updated_at: sig.position_updated_at ?? null,
+            long_name: sig.long_name ?? null,
+            hardware: sig.hardware ?? null,
+            role: sig.role ?? null,
+            battery_level: sig.battery_level ?? null,
+            voltage: sig.voltage ?? null,
+        },
+        geometry: { type: 'Point' as const, coordinates: [sig.lng, sig.lat] },
+    };
+}
+
+export function buildSigintGeoJSON(signals: SigintSignal[] | undefined): FC {
+    if (!signals?.length) return null;
+    return {
+        type: 'FeatureCollection' as const,
+        features: signals.map(buildSigintFeature).filter(Boolean) as GeoJSON.Feature[],
+    };
+}
+
+export function buildMeshtasticGeoJSON(signals: SigintSignal[] | undefined): FC {
+    if (!signals?.length) return null;
+    const filtered = signals.filter((s) => s.source === 'meshtastic');
+    if (!filtered.length) return null;
+    return {
+        type: 'FeatureCollection' as const,
+        features: filtered.map(buildSigintFeature).filter(Boolean) as GeoJSON.Feature[],
+    };
+}
+
+export function buildAprsGeoJSON(signals: SigintSignal[] | undefined): FC {
+    if (!signals?.length) return null;
+    const filtered = signals.filter((s) => s.source === 'aprs' || s.source === 'js8call');
+    if (!filtered.length) return null;
+    return {
+        type: 'FeatureCollection' as const,
+        features: filtered.map(buildSigintFeature).filter(Boolean) as GeoJSON.Feature[],
+    };
+}
+
+// ─── Ukraine Air Raid Alerts ────────────────────────────────────────────────
+
+const ALERT_TYPE_LABELS: Record<string, string> = {
+    air_raid: 'AIR RAID',
+    artillery_shelling: 'SHELLING',
+    urban_fights: 'URBAN COMBAT',
+    chemical: 'CHEMICAL',
+    nuclear: 'NUCLEAR',
+};
+
+export function buildUkraineAlertsGeoJSON(alerts?: UkraineAlert[]): FC {
+    if (!alerts?.length) return null;
+    return {
+        type: 'FeatureCollection' as const,
+        features: alerts.map((a, i) => ({
+            type: 'Feature' as const,
+            properties: {
+                id: a.id || `ua-alert-${i}`,
+                type: 'ukraine_alert',
+                alert_type: a.alert_type,
+                alert_label: ALERT_TYPE_LABELS[a.alert_type] || a.alert_type.toUpperCase(),
+                location_title: a.location_title,
+                name_en: a.name_en,
+                started_at: a.started_at,
+                color: a.color,
+            },
+            geometry: a.geometry,
+        })),
+    };
+}
+
+/** Compute a rough centroid from a polygon/multipolygon geometry. */
+function polygonCentroid(geom: GeoJSON.Geometry): [number, number] | null {
+    let coords: number[][] = [];
+    if (geom.type === 'Polygon') {
+        coords = geom.coordinates[0];
+    } else if (geom.type === 'MultiPolygon') {
+        // Use the largest ring (first polygon, outer ring)
+        coords = geom.coordinates[0]?.[0] ?? [];
+    }
+    if (!coords.length) return null;
+    let sumLng = 0, sumLat = 0;
+    for (const c of coords) { sumLng += c[0]; sumLat += c[1]; }
+    return [sumLng / coords.length, sumLat / coords.length];
+}
+
+export function buildUkraineAlertLabelsGeoJSON(alerts?: UkraineAlert[]): FC {
+    if (!alerts?.length) return null;
+    const features: GeoJSON.Feature[] = [];
+    for (let i = 0; i < alerts.length; i++) {
+        const a = alerts[i];
+        if (!a.geometry) continue;
+        const center = polygonCentroid(a.geometry);
+        if (!center) continue;
+        features.push({
+            type: 'Feature',
+            properties: {
+                id: a.id || `ua-alert-${i}`,
+                type: 'ukraine_alert',
+                alert_type: a.alert_type,
+                alert_label: ALERT_TYPE_LABELS[a.alert_type] || a.alert_type.toUpperCase(),
+                name_en: a.name_en,
+                color: a.color,
+            },
+            geometry: { type: 'Point', coordinates: center },
+        });
+    }
+    return features.length ? { type: 'FeatureCollection' as const, features } : null;
+}
+
+// ─── Weather Alerts ─────────────────────────────────────────────────────────
+
+const SEVERITY_COLORS: Record<string, string> = {
+    Extreme: '#ef4444',
+    Severe: '#f97316',
+    Moderate: '#eab308',
+    Minor: '#3b82f6',
+};
+
+export function buildWeatherAlertsGeoJSON(alerts?: WeatherAlert[]): FC {
+    if (!alerts?.length) return null;
+    return {
+        type: 'FeatureCollection' as const,
+        features: alerts.map((a, i) => ({
+            type: 'Feature' as const,
+            properties: {
+                id: a.id || `alert-${i}`,
+                type: 'weather_alert',
+                event: a.event,
+                severity: a.severity,
+                headline: a.headline,
+                description: a.description,
+                expires: a.expires,
+                color: SEVERITY_COLORS[a.severity] || '#3b82f6',
+            },
+            geometry: a.geometry,
+        })),
+    };
+}
+
+/** Build point features at each weather alert polygon centroid for icon + label overlay. */
+export function buildWeatherAlertLabelsGeoJSON(alerts?: WeatherAlert[]): FC {
+    if (!alerts?.length) return null;
+    const features: GeoJSON.Feature[] = [];
+    for (let i = 0; i < alerts.length; i++) {
+        const a = alerts[i];
+        if (!a.geometry) continue;
+        const center = polygonCentroid(a.geometry);
+        if (!center) continue;
+        features.push({
+            type: 'Feature',
+            properties: {
+                id: a.id || `alert-${i}`,
+                type: 'weather_alert',
+                event: a.event,
+                severity: a.severity,
+                headline: a.headline,
+                iconId: weatherIconId(a.event),
+                color: SEVERITY_COLORS[a.severity] || '#3b82f6',
+            },
+            geometry: { type: 'Point', coordinates: center },
+        });
+    }
+    return features.length ? { type: 'FeatureCollection' as const, features } : null;
+}
+
+// ─── Air Quality ────────────────────────────────────────────────────────────
+
+function aqiColor(aqi: number): string {
+    if (aqi <= 50) return '#22c55e';
+    if (aqi <= 100) return '#eab308';
+    if (aqi <= 150) return '#f97316';
+    if (aqi <= 200) return '#ef4444';
+    if (aqi <= 300) return '#a855f7';
+    return '#7f1d1d';
+}
+
+function aqiLabel(aqi: number): string {
+    if (aqi <= 50) return 'Good';
+    if (aqi <= 100) return 'Moderate';
+    if (aqi <= 150) return 'Unhealthy (Sensitive)';
+    if (aqi <= 200) return 'Unhealthy';
+    if (aqi <= 300) return 'Very Unhealthy';
+    return 'Hazardous';
+}
+
+export function buildAirQualityGeoJSON(stations?: AirQualityStation[]): FC {
+    if (!stations?.length) return null;
+    return {
+        type: 'FeatureCollection' as const,
+        features: stations.map((s, i) => ({
+            type: 'Feature' as const,
+            properties: {
+                id: `aq-${s.id || i}`,
+                type: 'air_quality',
+                name: s.name,
+                pm25: s.pm25,
+                aqi: s.aqi,
+                aqiLabel: aqiLabel(s.aqi),
+                country: s.country,
+                color: aqiColor(s.aqi),
+            },
+            geometry: { type: 'Point' as const, coordinates: [s.lng, s.lat] },
+        })),
+    };
+}
+
+// ─── Volcanoes ──────────────────────────────────────────────────────────────
+
+export function buildVolcanoesGeoJSON(volcanoes?: Volcano[]): FC {
+    if (!volcanoes?.length) return null;
+    const now = new Date().getFullYear();
+    return {
+        type: 'FeatureCollection' as const,
+        features: volcanoes.map((v, i) => {
+            const yearsAgo = v.last_eruption_year ? now - v.last_eruption_year : 99999;
+            const iconId =
+                yearsAgo <= 50
+                    ? 'volcano-active'
+                    : yearsAgo <= 500
+                        ? 'volcano-historical'
+                        : 'volcano-dormant';
+            return {
+                type: 'Feature' as const,
+                properties: {
+                    id: `volcano-${i}`,
+                    type: 'volcano',
+                    name: v.name,
+                    vtype: v.type,
+                    country: v.country,
+                    region: v.region,
+                    elevation: v.elevation,
+                    last_eruption_year: v.last_eruption_year,
+                    iconId,
+                },
+                geometry: { type: 'Point' as const, coordinates: [v.lng, v.lat] },
+            };
+        }),
+    };
+}
+
+// ─── Fishing Activity ───────────────────────────────────────────────────────
+
+export function buildFishingActivityGeoJSON(events?: FishingEvent[]): FC {
+    if (!events?.length) return null;
+    return {
+        type: 'FeatureCollection' as const,
+        features: events.map((e, i) => ({
+            type: 'Feature' as const,
+            properties: {
+                id: e.id || `fish-${i}`,
+                type: 'fishing_event',
+                vessel_name: e.vessel_name,
+                vessel_flag: e.vessel_flag,
+                event_type: e.type,
+                start: e.start,
+                end: e.end,
+                duration_hrs: e.duration_hrs,
+            },
+            geometry: { type: 'Point' as const, coordinates: [e.lng, e.lat] },
+        })),
+    };
+}
+
+// ─── ISS Footprint ─────────────────────────────────────────────────────────
+
+const R_EARTH = 6371; // km
+
+/** Generate a GeoJSON polygon circle (great-circle approximation). */
+function geoCircle(centerLng: number, centerLat: number, radiusKm: number, steps = 64): GeoJSON.Feature {
+    const coords: [number, number][] = [];
+    const angularRadius = radiusKm / R_EARTH; // radians
+    const lat1 = (centerLat * Math.PI) / 180;
+    const lng1 = (centerLng * Math.PI) / 180;
+
+    for (let i = 0; i <= steps; i++) {
+        const bearing = (2 * Math.PI * i) / steps;
+        const lat2 = Math.asin(
+            Math.sin(lat1) * Math.cos(angularRadius) +
+            Math.cos(lat1) * Math.sin(angularRadius) * Math.cos(bearing),
+        );
+        const lng2 =
+            lng1 +
+            Math.atan2(
+                Math.sin(bearing) * Math.sin(angularRadius) * Math.cos(lat1),
+                Math.cos(angularRadius) - Math.sin(lat1) * Math.sin(lat2),
+            );
+        coords.push([(lng2 * 180) / Math.PI, (lat2 * 180) / Math.PI]);
+    }
+
+    return {
+        type: 'Feature',
+        properties: { type: 'iss_footprint' },
+        geometry: { type: 'Polygon', coordinates: [coords] },
+    };
+}
+
+export function buildISSFootprintGeoJSON(
+    satellites: Satellite[] | undefined,
+    interpSat: (s: Satellite) => [number, number],
+): FC {
+    if (!satellites?.length) return null;
+    const iss = satellites.find((s) => s.mission === 'space_station' && s.name?.includes('ISS'));
+    if (!iss) return null;
+
+    const [lng, lat] = interpSat(iss);
+    const alt = iss.alt_km || 420;
+    // Line-of-sight footprint radius: R * arccos(R / (R + h))
+    const footprintKm = R_EARTH * Math.acos(R_EARTH / (R_EARTH + alt));
+
+    return {
+        type: 'FeatureCollection' as const,
+        features: [geoCircle(lng, lat, footprintKm)],
     };
 }
