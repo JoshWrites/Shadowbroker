@@ -4,6 +4,14 @@ import { API_BASE } from "@/lib/api";
 export type BackendStatus = 'connecting' | 'connected' | 'disconnected';
 export type LayerErrorState = 'retrying' | 'failed';
 
+/**
+ * Event name dispatched by page.tsx when a layer toggle changes.
+ * useDataPolling listens for this to immediately refetch slow-tier data
+ * so toggled layers (power plants, GDELT, etc.) appear without the usual
+ * 120-second wait.
+ */
+export const LAYER_TOGGLE_EVENT = 'sb:layer-toggle';
+
 const MAX_RETRIES = 3;
 
 // Which frontend layer IDs belong to the fast polling tier
@@ -12,6 +20,7 @@ const FAST_LAYERS = new Set([
   "satellites", "trains", "cctv", "gps_jamming", "global_incidents",
   "ships_military", "ships_cargo", "ships_civilian", "ships_passenger", "ships_tracked_yachts",
   "pikud_alerts", "ukraine_alerts",
+  "sigint_meshtastic", "sigint_aprs",
 ]);
 
 // Which frontend layer IDs belong to the slow polling tier
@@ -19,6 +28,9 @@ const SLOW_LAYERS = new Set([
   "earthquakes", "ukraine_frontline", "global_incidents",
   "kiwisdr", "internet_outages", "firms", "datacenters", "military_bases",
   "bgp_anomalies", "cf_anomalies", "active_ddos",
+  "power_plants", "satnogs", "tinygs", "psk_reporter", "scanners",
+  "weather_alerts", "air_quality", "volcanoes", "fishing_activity",
+  "correlations", "viirs_nightlights", "shodan_overlay", "sentinel_hub",
 ]);
 
 /**
