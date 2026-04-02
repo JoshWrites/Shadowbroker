@@ -210,45 +210,12 @@ def get_source_timestamps_snapshot() -> dict[str, str]:
 # Keep these aligned with the dashboard's default layer state so startup does
 # not fetch heavyweight feeds the UI starts with disabled.
 # ---------------------------------------------------------------------------
-active_layers: dict[str, bool] = {
-    "flights": True,
-    "private": True,
-    "jets": True,
-    "military": True,
-    "tracked": True,
-    "satellites": True,
-    "ships_military": True,
-    "ships_cargo": True,
-    "ships_civilian": True,
-    "ships_passenger": True,
-    "ships_tracked_yachts": True,
-    "earthquakes": True,
-    "cctv": True,
-    "ukraine_frontline": True,
-    "global_incidents": True,
-    "gps_jamming": True,
-    "kiwisdr": True,
-    "scanners": True,
-    "firms": True,
-    "internet_outages": True,
-    "datacenters": True,
-    "military_bases": True,
-    "sigint_meshtastic": True,
-    "sigint_aprs": True,
-    "weather_alerts": True,
-    "air_quality": True,
-    "volcanoes": True,
-    "fishing_activity": True,
-    "satnogs": True,
-    "tinygs": True,
-    "ukraine_alerts": True,
-    "power_plants": False,
-    "viirs_nightlights": False,
-    "psk_reporter": True,
-    "correlations": True,
-}
+# All layers default to OFF — frontend enables them on demand.
+# This prevents the backend from eagerly fetching heavyweight feeds
+# that the UI hasn't requested yet.
+active_layers: dict[str, bool] = {}
 
 
 def is_any_active(*layer_names: str) -> bool:
     """Return True if any of the given layer names is currently active."""
-    return any(active_layers.get(name, True) for name in layer_names)
+    return any(active_layers.get(name, False) for name in layer_names)
