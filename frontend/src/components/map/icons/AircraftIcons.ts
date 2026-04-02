@@ -155,10 +155,10 @@ export const GROUNDED_ICON_MAP: Record<string, string> = { heli: 'svgHeliGrey', 
 
 // Per-layer color maps (module-level to avoid re-allocation every render tick)
 // 3-tier hierarchy: Baseline (dim cyan/slate) → Watch (amber) → Critical (red/gold/pink)
-export const COLOR_MAP_COMMERCIAL: Record<string, string> = { heli: 'svgHeliDimCyan', turboprop: 'svgTurbopropDimCyan', bizjet: 'svgBizjetDimCyan', airliner: 'svgAirlinerDimCyan' };
-export const COLOR_MAP_PRIVATE: Record<string, string> = { heli: 'svgHeliPurple', turboprop: 'svgTurbopropPurple', bizjet: 'svgBizjetPurple', airliner: 'svgAirlinerPurple' };
+export const COLOR_MAP_COMMERCIAL: Record<string, string> = { heli: 'svgHeliCyan', turboprop: 'svgTurbopropCyan', bizjet: 'svgBizjetCyan', airliner: 'svgAirlinerCyan' };
+export const COLOR_MAP_PRIVATE: Record<string, string> = { heli: 'svgHeliOrange', turboprop: 'svgTurbopropOrange', bizjet: 'svgBizjetOrange', airliner: 'svgAirlinerOrange' };
 export const COLOR_MAP_JETS: Record<string, string> = { heli: 'svgHeliPurple', turboprop: 'svgTurbopropPurple', bizjet: 'svgBizjetPurple', airliner: 'svgAirlinerPurple' };
-export const COLOR_MAP_MILITARY: Record<string, string> = { heli: 'svgHeliAmber', turboprop: 'svgTurbopropAmber', bizjet: 'svgBizjetAmber', airliner: 'svgAirlinerAmber' };
+export const COLOR_MAP_MILITARY: Record<string, string> = { heli: 'svgHeli', turboprop: 'svgTurbopropYellow', bizjet: 'svgBizjetYellow', airliner: 'svgAirlinerYellow' };
 export const MIL_SPECIAL_MAP: Record<string, string> = { fighter: 'svgFighter', tanker: 'svgTanker', recon: 'svgRecon' };
 
 // ---------------------------------------------------------------------------
