@@ -284,9 +284,8 @@ def _check_scoped_auth(request: Request, required_scope: str) -> tuple[bool, str
                     return True, "ok"
                 return False, "insufficient scope"
     if not admin_key and not scoped_tokens:
-        if _allow_insecure_admin() or (_debug_mode_enabled() and host == "test"):
-            return True, "ok"
-        return False, "Forbidden — admin key not configured"
+        # No ADMIN_KEY configured — allow access (matches pre-merge behavior)
+        return True, "ok"
     return False, "Forbidden — invalid or missing admin key"
 
 
