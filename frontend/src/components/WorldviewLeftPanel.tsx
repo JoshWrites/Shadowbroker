@@ -373,7 +373,7 @@ const WorldviewLeftPanel = React.memo(function WorldviewLeftPanel({ data, active
             </div>
 
             {/* Data Layers Box */}
-            <div className="bg-[var(--bg-primary)]/40 backdrop-blur-md border border-[var(--border-primary)] rounded-xl pointer-events-auto shadow-[0_4px_30px_rgba(0,0,0,0.2)] flex flex-col relative overflow-hidden max-h-full">
+            <div className="bg-[var(--bg-primary)]/40 backdrop-blur-md border border-[var(--border-primary)] rounded-xl pointer-events-auto shadow-[0_4px_30px_rgba(0,0,0,0.2)] flex flex-col relative max-h-full overflow-hidden">
 
                 {/* Header / Toggle */}
                 <div
@@ -410,7 +410,7 @@ const WorldviewLeftPanel = React.memo(function WorldviewLeftPanel({ data, active
                             initial={{ height: 0, opacity: 0 }}
                             animate={{ height: "auto", opacity: 1 }}
                             exit={{ height: 0, opacity: 0 }}
-                            className="overflow-y-auto styled-scrollbar"
+                            className="overflow-y-auto styled-scrollbar min-h-0 flex-1"
                         >
                             <div className="flex flex-col gap-6 p-4 pt-2 pb-6">
                                 {/* SDR TRACKER — pinned to TOP when active */}
