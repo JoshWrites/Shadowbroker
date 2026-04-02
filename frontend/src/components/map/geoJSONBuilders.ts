@@ -931,14 +931,14 @@ export function buildUkraineAlertsGeoJSON(alerts?: UkraineAlert[]): FC {
             properties: {
                 id: a.id || `ua-alert-${i}`,
                 type: 'ukraine_alert',
-                alert_type: a.alert_type,
-                alert_label: ALERT_TYPE_LABELS[a.alert_type] || a.alert_type.toUpperCase(),
-                location_title: a.location_title,
-                name_en: a.name_en,
-                started_at: a.started_at,
+                alert_type: a.type,
+                alert_label: ALERT_TYPE_LABELS[a.type] || a.type_label || a.type.toUpperCase(),
+                location_title: a.region,
+                name_en: a.region,
+                started_at: a.timestamp,
                 color: a.color,
             },
-            geometry: a.geometry,
+            geometry: { type: 'Point' as const, coordinates: [a.lng, a.lat] },
         })),
     };
 }
@@ -963,20 +963,18 @@ export function buildUkraineAlertLabelsGeoJSON(alerts?: UkraineAlert[]): FC {
     const features: GeoJSON.Feature[] = [];
     for (let i = 0; i < alerts.length; i++) {
         const a = alerts[i];
-        if (!a.geometry) continue;
-        const center = polygonCentroid(a.geometry);
-        if (!center) continue;
+        if (!a.lat || !a.lng) continue;
         features.push({
             type: 'Feature',
             properties: {
                 id: a.id || `ua-alert-${i}`,
                 type: 'ukraine_alert',
-                alert_type: a.alert_type,
-                alert_label: ALERT_TYPE_LABELS[a.alert_type] || a.alert_type.toUpperCase(),
-                name_en: a.name_en,
+                alert_type: a.type,
+                alert_label: ALERT_TYPE_LABELS[a.type] || a.type_label || a.type.toUpperCase(),
+                name_en: a.region,
                 color: a.color,
             },
-            geometry: { type: 'Point', coordinates: center },
+            geometry: { type: 'Point', coordinates: [a.lng, a.lat] },
         });
     }
     return features.length ? { type: 'FeatureCollection' as const, features } : null;

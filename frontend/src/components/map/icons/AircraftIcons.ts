@@ -160,3 +160,108 @@ export const COLOR_MAP_PRIVATE: Record<string, string> = { heli: 'svgHeliPurple'
 export const COLOR_MAP_JETS: Record<string, string> = { heli: 'svgHeliPurple', turboprop: 'svgTurbopropPurple', bizjet: 'svgBizjetPurple', airliner: 'svgAirlinerPurple' };
 export const COLOR_MAP_MILITARY: Record<string, string> = { heli: 'svgHeliAmber', turboprop: 'svgTurbopropAmber', bizjet: 'svgBizjetAmber', airliner: 'svgAirlinerAmber' };
 export const MIL_SPECIAL_MAP: Record<string, string> = { fighter: 'svgFighter', tanker: 'svgTanker', recon: 'svgRecon' };
+
+// ---------------------------------------------------------------------------
+// Weather alert icons
+// ---------------------------------------------------------------------------
+function weatherSvg(inner: string): string {
+  return `data:image/svg+xml;utf8,${encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">${inner}</svg>`
+  )}`;
+}
+
+export const svgWeatherThunderstorm = weatherSvg(
+  `<ellipse cx="16" cy="12" rx="10" ry="6" fill="#64748b" stroke="#334155" stroke-width="1"/>` +
+  `<ellipse cx="12" cy="11" rx="6" ry="5" fill="#94a3b8"/>` +
+  `<polygon points="15,17 12,24 16,22 13,30 19,21 15,23" fill="#facc15" stroke="#a16207" stroke-width="0.5"/>`,
+);
+
+export const svgWeatherRain = weatherSvg(
+  `<ellipse cx="16" cy="11" rx="10" ry="6" fill="#64748b" stroke="#334155" stroke-width="1"/>` +
+  `<ellipse cx="12" cy="10" rx="6" ry="5" fill="#94a3b8"/>` +
+  `<line x1="10" y1="19" x2="8" y2="25" stroke="#60a5fa" stroke-width="1.5" stroke-linecap="round"/>` +
+  `<line x1="16" y1="19" x2="14" y2="25" stroke="#60a5fa" stroke-width="1.5" stroke-linecap="round"/>` +
+  `<line x1="22" y1="19" x2="20" y2="25" stroke="#60a5fa" stroke-width="1.5" stroke-linecap="round"/>` +
+  `<line x1="13" y1="22" x2="11" y2="28" stroke="#60a5fa" stroke-width="1.5" stroke-linecap="round"/>` +
+  `<line x1="19" y1="22" x2="17" y2="28" stroke="#60a5fa" stroke-width="1.5" stroke-linecap="round"/>`,
+);
+
+export const svgWeatherSnow = weatherSvg(
+  `<ellipse cx="16" cy="11" rx="10" ry="6" fill="#94a3b8" stroke="#64748b" stroke-width="1"/>` +
+  `<ellipse cx="12" cy="10" rx="6" ry="5" fill="#cbd5e1"/>` +
+  `<circle cx="10" cy="21" r="1.5" fill="#e2e8f0"/>` +
+  `<circle cx="16" cy="23" r="1.5" fill="#e2e8f0"/>` +
+  `<circle cx="22" cy="21" r="1.5" fill="#e2e8f0"/>` +
+  `<circle cx="13" cy="27" r="1.5" fill="#e2e8f0"/>` +
+  `<circle cx="19" cy="27" r="1.5" fill="#e2e8f0"/>`,
+);
+
+export const svgWeatherTornado = weatherSvg(
+  `<ellipse cx="16" cy="6" rx="10" ry="4" fill="#64748b" stroke="#334155" stroke-width="1"/>` +
+  `<path d="M8,8 Q10,14 13,18 Q14,22 15,28" fill="none" stroke="#94a3b8" stroke-width="3" stroke-linecap="round"/>` +
+  `<path d="M24,8 Q22,14 19,18 Q18,22 17,28" fill="none" stroke="#94a3b8" stroke-width="3" stroke-linecap="round"/>` +
+  `<ellipse cx="16" cy="28" rx="2" ry="1" fill="#78716c"/>`,
+);
+
+export const svgWeatherWind = weatherSvg(
+  `<path d="M4,10 Q8,6 12,10 Q16,14 20,10 Q24,6 28,10" fill="none" stroke="#94a3b8" stroke-width="2" stroke-linecap="round"/>` +
+  `<path d="M4,17 Q8,13 12,17 Q16,21 20,17 Q24,13 28,17" fill="none" stroke="#cbd5e1" stroke-width="2" stroke-linecap="round"/>` +
+  `<path d="M6,24 Q10,20 14,24 Q18,28 22,24 Q26,20 30,24" fill="none" stroke="#64748b" stroke-width="2" stroke-linecap="round"/>`,
+);
+
+export const svgWeatherFlood = weatherSvg(
+  `<ellipse cx="16" cy="10" rx="10" ry="5" fill="#64748b" stroke="#334155" stroke-width="1"/>` +
+  `<path d="M2,20 Q6,16 10,20 Q14,24 18,20 Q22,16 26,20 Q30,24 34,20" fill="none" stroke="#3b82f6" stroke-width="2"/>` +
+  `<path d="M0,26 Q4,22 8,26 Q12,30 16,26 Q20,22 24,26 Q28,30 32,26" fill="none" stroke="#2563eb" stroke-width="2"/>`,
+);
+
+export const svgWeatherHeat = weatherSvg(
+  `<circle cx="16" cy="16" r="6" fill="#f59e0b" stroke="#d97706" stroke-width="1"/>` +
+  `<line x1="16" y1="4" x2="16" y2="8" stroke="#f59e0b" stroke-width="2" stroke-linecap="round"/>` +
+  `<line x1="16" y1="24" x2="16" y2="28" stroke="#f59e0b" stroke-width="2" stroke-linecap="round"/>` +
+  `<line x1="4" y1="16" x2="8" y2="16" stroke="#f59e0b" stroke-width="2" stroke-linecap="round"/>` +
+  `<line x1="24" y1="16" x2="28" y2="16" stroke="#f59e0b" stroke-width="2" stroke-linecap="round"/>` +
+  `<line x1="7.5" y1="7.5" x2="10.3" y2="10.3" stroke="#f59e0b" stroke-width="2" stroke-linecap="round"/>` +
+  `<line x1="21.7" y1="21.7" x2="24.5" y2="24.5" stroke="#f59e0b" stroke-width="2" stroke-linecap="round"/>` +
+  `<line x1="24.5" y1="7.5" x2="21.7" y2="10.3" stroke="#f59e0b" stroke-width="2" stroke-linecap="round"/>` +
+  `<line x1="10.3" y1="21.7" x2="7.5" y2="24.5" stroke="#f59e0b" stroke-width="2" stroke-linecap="round"/>`,
+);
+
+export const svgWeatherFog = weatherSvg(
+  `<line x1="4" y1="10" x2="28" y2="10" stroke="#94a3b8" stroke-width="2.5" stroke-linecap="round"/>` +
+  `<line x1="6" y1="15" x2="26" y2="15" stroke="#cbd5e1" stroke-width="2.5" stroke-linecap="round"/>` +
+  `<line x1="4" y1="20" x2="28" y2="20" stroke="#94a3b8" stroke-width="2.5" stroke-linecap="round"/>` +
+  `<line x1="8" y1="25" x2="24" y2="25" stroke="#cbd5e1" stroke-width="2.5" stroke-linecap="round"/>`,
+);
+
+export const svgWeatherGeneric = weatherSvg(
+  `<ellipse cx="16" cy="12" rx="10" ry="6" fill="#64748b" stroke="#334155" stroke-width="1"/>` +
+  `<ellipse cx="12" cy="11" rx="6" ry="5" fill="#94a3b8"/>` +
+  `<rect x="14.5" y="19" width="3" height="6" rx="1" fill="#f59e0b"/>` +
+  `<circle cx="16" cy="28" r="1.8" fill="#f59e0b"/>`,
+);
+
+export function weatherIconId(event: string): string {
+  const e = event.toLowerCase();
+  if (e.includes('tornado') || e.includes('funnel')) return 'wx-tornado';
+  if (e.includes('thunder') || e.includes('lightning') || e.includes('tstm')) return 'wx-thunderstorm';
+  if (e.includes('snow') || e.includes('blizzard') || e.includes('winter') || e.includes('ice') || e.includes('freezing') || e.includes('frost') || e.includes('sleet')) return 'wx-snow';
+  if (e.includes('flood') || e.includes('surge') || e.includes('tsunami') || e.includes('coastal')) return 'wx-flood';
+  if (e.includes('wind') || e.includes('gale') || e.includes('hurricane') || e.includes('tropical') || e.includes('typhoon')) return 'wx-wind';
+  if (e.includes('heat') || e.includes('excessive') || e.includes('fire') || e.includes('red flag')) return 'wx-heat';
+  if (e.includes('fog') || e.includes('dense') || e.includes('smoke') || e.includes('haze')) return 'wx-fog';
+  if (e.includes('rain') || e.includes('shower') || e.includes('drizzle')) return 'wx-rain';
+  return 'wx-generic';
+}
+
+export const WEATHER_ICON_SPECS: { id: string; svg: string }[] = [
+  { id: 'wx-thunderstorm', svg: svgWeatherThunderstorm },
+  { id: 'wx-rain',         svg: svgWeatherRain },
+  { id: 'wx-snow',         svg: svgWeatherSnow },
+  { id: 'wx-tornado',      svg: svgWeatherTornado },
+  { id: 'wx-wind',         svg: svgWeatherWind },
+  { id: 'wx-flood',        svg: svgWeatherFlood },
+  { id: 'wx-heat',         svg: svgWeatherHeat },
+  { id: 'wx-fog',          svg: svgWeatherFog },
+  { id: 'wx-generic',      svg: svgWeatherGeneric },
+];

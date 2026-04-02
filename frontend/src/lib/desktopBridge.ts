@@ -7,6 +7,13 @@ import type {
 } from '@/lib/desktopControlContract';
 import type { ShadowbrokerLocalControlBridge } from '@/lib/localControlTransport';
 
+declare global {
+  interface Window {
+    __SHADOWBROKER_LOCAL_CONTROL__?: ShadowbrokerLocalControlBridge;
+    __SHADOWBROKER_DESKTOP__?: ShadowbrokerDesktopRuntime;
+  }
+}
+
 export interface ShadowbrokerDesktopRuntime {
   invokeLocalControl?<T = unknown>(
     command: DesktopControlCommand,
