@@ -210,12 +210,13 @@ def get_source_timestamps_snapshot() -> dict[str, str]:
 # Keep these aligned with the dashboard's default layer state so startup does
 # not fetch heavyweight feeds the UI starts with disabled.
 # ---------------------------------------------------------------------------
-# All layers default to OFF — frontend enables them on demand.
-# This prevents the backend from eagerly fetching heavyweight feeds
-# that the UI hasn't requested yet.
+# Backend always fetches all data so it's ready when the frontend requests it.
+# The demand-driven gating happens on the frontend (useDataPolling only polls
+# layers the user has toggled on).
 active_layers: dict[str, bool] = {}
 
 
 def is_any_active(*layer_names: str) -> bool:
-    """Return True if any of the given layer names is currently active."""
-    return any(active_layers.get(name, False) for name in layer_names)
+    """Return True if any of the given layer names is currently active.
+    Defaults to True so fetchers always run — the frontend controls what gets displayed."""
+    return any(active_layers.get(name, True) for name in layer_names)
