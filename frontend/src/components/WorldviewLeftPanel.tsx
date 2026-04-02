@@ -47,6 +47,19 @@ const FRESHNESS_MAP: Record<string, string> = {
     bgp_anomalies: "bgp_anomalies",
     cf_anomalies: "cf_anomalies",
     active_ddos: "active_ddos",
+    scanners: "scanners",
+    power_plants: "power_plants",
+    sigint_meshtastic: "sigint",
+    sigint_aprs: "sigint",
+    psk_reporter: "psk_reporter",
+    satnogs: "satnogs_stations",
+    tinygs: "tinygs_satellites",
+    weather_alerts: "weather_alerts",
+    air_quality: "air_quality",
+    volcanoes: "volcanoes",
+    fishing_activity: "fishing_activity",
+    correlations: "correlations",
+    viirs_nightlights: "viirs_change_nodes",
 };
 
 // POTUS fleet ICAO hex codes for client-side filtering
@@ -284,6 +297,25 @@ const WorldviewLeftPanel = React.memo(function WorldviewLeftPanel({ data, active
         { id: "weather_pressure", name: "Pressure Map", source: "OpenWeatherMap", count: null, icon: Globe },
         { id: "weather_wind", name: "Wind Map", source: "OpenWeatherMap", count: null, icon: Globe },
         { id: "weather_temperature", name: "Temperature Map", source: "OpenWeatherMap", count: null, icon: Globe },
+        // SIGINT
+        { id: "sigint_meshtastic", name: "Meshtastic Mesh", source: "Meshtastic MQTT", count: data?.sigint?.filter?.((s: any) => s.protocol === 'meshtastic')?.length || 0, icon: Radio },
+        { id: "sigint_aprs", name: "APRS / JS8Call", source: "APRS-IS", count: data?.sigint?.filter?.((s: any) => s.protocol !== 'meshtastic')?.length || 0, icon: Radio },
+        { id: "scanners", name: "Police Scanners", source: "OpenMHz", count: data?.scanners?.length || 0, icon: Radio },
+        { id: "psk_reporter", name: "PSK Reporter", source: "PSKReporter.info", count: data?.psk_reporter?.length || 0, icon: Radio },
+        { id: "satnogs", name: "SatNOGS Stations", source: "SatNOGS Network", count: data?.satnogs_stations?.length || 0, icon: Satellite },
+        { id: "tinygs", name: "TinyGS Satellites", source: "TinyGS LoRa", count: data?.tinygs_satellites?.length || 0, icon: Satellite },
+        // Infrastructure
+        { id: "power_plants", name: "Power Plants", source: "WRI Global Power Plant DB", count: data?.power_plants?.length || 0, icon: Activity },
+        // Environmental
+        { id: "weather_alerts", name: "Weather Alerts", source: "NWS / Meteoalarm", count: data?.weather_alerts?.length || 0, icon: AlertTriangle },
+        { id: "air_quality", name: "Air Quality", source: "OpenAQ", count: data?.air_quality?.length || 0, icon: Activity },
+        { id: "volcanoes", name: "Volcanoes", source: "Smithsonian GVP", count: data?.volcanoes?.length || 0, icon: Flame },
+        { id: "fishing_activity", name: "Fishing Activity", source: "Global Fishing Watch", count: data?.fishing_activity?.length || 0, icon: Anchor },
+        // Intelligence
+        { id: "correlations", name: "Correlations", source: "Shadowbroker Engine", count: data?.correlations?.length || 0, icon: Activity },
+        { id: "viirs_nightlights", name: "VIIRS Nightlights", source: "NASA VIIRS", count: data?.viirs_change_nodes?.length || 0, icon: Globe },
+        { id: "sentinel_hub", name: "Sentinel Hub", source: "Copernicus CDSE", count: null, icon: Satellite },
+        { id: "shodan_overlay", name: "Shodan Overlay", source: "Shodan.io", count: null, icon: Server },
     ];
 
     const shipIcon = <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M2 21c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1 .6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1" /><path d="M19.38 20A11.6 11.6 0 0 0 21 14l-9-4-9 4c0 2.9.94 5.34 2.81 7.76" /><path d="M19 13V7a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v6" /></svg>;
