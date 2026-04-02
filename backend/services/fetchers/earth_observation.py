@@ -22,10 +22,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 @with_retry(max_retries=1, base_delay=1)
 def fetch_earthquakes():
-    from services.fetchers._store import is_any_active
 
-    if not is_any_active("earthquakes"):
-        return
     quakes = []
     try:
         url = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson"
@@ -58,10 +55,7 @@ def fetch_earthquakes():
 @with_retry(max_retries=1, base_delay=2)
 def fetch_firms_fires():
     """Fetch global fire/thermal anomalies from NASA FIRMS (NOAA-20 VIIRS, 24h, no key needed)."""
-    from services.fetchers._store import is_any_active
 
-    if not is_any_active("firms"):
-        return
     fires = []
     try:
         url = "https://firms.modaps.eosdis.nasa.gov/data/active_fire/noaa-20-viirs-c2/csv/J1_VIIRS_C2_Global_24h.csv"
@@ -116,10 +110,7 @@ def fetch_firms_country_fires():
     Merges results into the existing firms_fires data store (no new frontend key).
     Requires FIRMS_MAP_KEY env var (free from NASA Earthdata). Skips if not set.
     """
-    from services.fetchers._store import is_any_active
 
-    if not is_any_active("firms"):
-        return
 
     map_key = os.environ.get("FIRMS_MAP_KEY", "")
     if not map_key:
@@ -267,10 +258,7 @@ def fetch_weather():
 @with_retry(max_retries=1, base_delay=2)
 def fetch_weather_alerts():
     """Fetch active severe weather alerts from NOAA/NWS (US coverage, GeoJSON polygons)."""
-    from services.fetchers._store import is_any_active
 
-    if not is_any_active("weather_alerts"):
-        return
     alerts = []
     try:
         url = "https://api.weather.gov/alerts/active?status=actual"
@@ -330,10 +318,7 @@ def _pm25_to_aqi(pm25: float) -> int:
 @with_retry(max_retries=1, base_delay=2)
 def fetch_air_quality():
     """Fetch global air quality stations with PM2.5 data from OpenAQ."""
-    from services.fetchers._store import is_any_active
 
-    if not is_any_active("air_quality"):
-        return
     stations = []
     api_key = os.environ.get("OPENAQ_API_KEY", "")
     if not api_key:
@@ -387,10 +372,7 @@ def fetch_air_quality():
 @with_retry(max_retries=2, base_delay=5)
 def fetch_volcanoes():
     """Fetch Holocene volcanoes from Smithsonian GVP WFS (static reference data)."""
-    from services.fetchers._store import is_any_active
 
-    if not is_any_active("volcanoes"):
-        return
     volcanoes = []
     try:
         url = (
@@ -488,10 +470,7 @@ def _load_viirs_stale_cache():
 @with_retry(max_retries=1, base_delay=5)
 def fetch_viirs_change_nodes():
     """Compute VIIRS nighttime radiance change nodes via GEE (optional)."""
-    from services.fetchers._store import is_any_active
 
-    if not is_any_active("viirs_nightlights"):
-        return
 
     # Check cache freshness first
     if _VIIRS_CACHE_PATH.exists():

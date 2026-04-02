@@ -204,10 +204,7 @@ def _fetch_satellites_from_tle_api():
 
 
 def fetch_satellites():
-    from services.fetchers._store import is_any_active
 
-    if not is_any_active("satellites"):
-        return
     sats = []
     try:
         now_ts = time.time()

@@ -83,10 +83,7 @@ def refresh_sigint_snapshot() -> tuple[list[dict], dict[str, object], dict[str, 
 
 def fetch_sigint():
     """Fetch all signals from the SIGINT Grid, merge with Meshtastic map nodes."""
-    from services.fetchers._store import is_any_active
 
-    if not is_any_active("sigint_meshtastic", "sigint_aprs"):
-        return
     from services.sigint_bridge import sigint_grid
 
     # Start bridges on first call (idempotent)

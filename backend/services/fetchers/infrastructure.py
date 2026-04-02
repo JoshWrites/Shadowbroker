@@ -46,10 +46,7 @@ def _geocode_region(region_name: str, country_name: str) -> tuple:
 @with_retry(max_retries=1, base_delay=1)
 def fetch_internet_outages():
     """Fetch regional internet outage alerts from IODA (Georgia Tech)."""
-    from services.fetchers._store import is_any_active
 
-    if not is_any_active("internet_outages"):
-        return
     RELIABLE_DATASOURCES = {"bgp", "ping-slash24"}
     outages = []
     try:
@@ -125,10 +122,7 @@ def fetch_internet_outages():
 @with_retry(max_retries=1, base_delay=3)
 def fetch_ripe_atlas_probes():
     """Fetch disconnected RIPE Atlas probes and merge into internet_outages (complementing IODA)."""
-    from services.fetchers._store import is_any_active
 
-    if not is_any_active("internet_outages"):
-        return
     try:
         # 1. Fetch disconnected probes (status=2) — ~2,000 probes, no auth needed
         url_disc = "https://atlas.ripe.net/api/v2/probes/?status=2&page_size=500&format=json"
@@ -236,10 +230,7 @@ _DC_GEOCODED_PATH = Path(__file__).parent.parent.parent / "data" / "datacenters_
 
 def fetch_datacenters():
     """Load geocoded data centers (5K+ street-level precise locations)."""
-    from services.fetchers._store import is_any_active
 
-    if not is_any_active("datacenters"):
-        return
     dcs = []
     try:
         if not _DC_GEOCODED_PATH.exists():
@@ -361,10 +352,7 @@ def fetch_power_plants():
 # CCTV Cameras
 # ---------------------------------------------------------------------------
 def fetch_cctv():
-    from services.fetchers._store import is_any_active
 
-    if not is_any_active("cctv"):
-        return
     try:
         from services.cctv_pipeline import get_all_cameras
 
@@ -396,10 +384,7 @@ def fetch_cctv():
 # ---------------------------------------------------------------------------
 @with_retry(max_retries=2, base_delay=2)
 def fetch_kiwisdr():
-    from services.fetchers._store import is_any_active
 
-    if not is_any_active("kiwisdr"):
-        return
     try:
         from services.kiwisdr_fetcher import fetch_kiwisdr_nodes
 
@@ -426,10 +411,7 @@ def fetch_kiwisdr():
 # ---------------------------------------------------------------------------
 @with_retry(max_retries=2, base_delay=2)
 def fetch_satnogs():
-    from services.fetchers._store import is_any_active
 
-    if not is_any_active("satnogs"):
-        return
     try:
         from services.satnogs_fetcher import fetch_satnogs_stations, fetch_satnogs_observations
 
@@ -456,10 +438,7 @@ def fetch_satnogs():
 # ---------------------------------------------------------------------------
 @with_retry(max_retries=2, base_delay=2)
 def fetch_psk_reporter():
-    from services.fetchers._store import is_any_active
 
-    if not is_any_active("psk_reporter"):
-        return
     try:
         from services.psk_reporter_fetcher import fetch_psk_reporter_spots
 
@@ -486,10 +465,7 @@ def fetch_psk_reporter():
 # ---------------------------------------------------------------------------
 @with_retry(max_retries=2, base_delay=2)
 def fetch_tinygs():
-    from services.fetchers._store import is_any_active
 
-    if not is_any_active("tinygs"):
-        return
     try:
         from services.tinygs_fetcher import fetch_tinygs_satellites
 
@@ -680,10 +656,7 @@ def _geocode_scanner(city: str, state: str):
 
 @with_retry(max_retries=2, base_delay=2)
 def fetch_scanners():
-    from services.fetchers._store import is_any_active
 
-    if not is_any_active("scanners"):
-        return
     try:
         from services.radio_intercept import get_openmhz_systems
 

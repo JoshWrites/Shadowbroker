@@ -137,10 +137,7 @@ def _classify_uav(model: str, callsign: str):
 
 
 def fetch_military_flights():
-    from services.fetchers._store import is_any_active
 
-    if not is_any_active("military"):
-        return
     military_flights = []
     detected_uavs = []
     # Fetch from primary + supplemental military endpoints

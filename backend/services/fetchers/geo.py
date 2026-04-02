@@ -18,12 +18,7 @@ logger = logging.getLogger(__name__)
 @with_retry(max_retries=1, base_delay=1)
 def fetch_ships():
     """Fetch real-time AIS vessel data and combine with OSINT carrier positions."""
-    from services.fetchers._store import is_any_active
 
-    if not is_any_active(
-        "ships_military", "ships_cargo", "ships_civilian", "ships_passenger", "ships_tracked_yachts"
-    ):
-        return
     from services.ais_stream import get_ais_vessels
     from services.carrier_tracker import get_carrier_positions
 
@@ -138,10 +133,7 @@ def fetch_airports():
 @with_retry(max_retries=1, base_delay=2)
 def fetch_frontlines():
     """Fetch Ukraine frontline data (fast — single GitHub API call)."""
-    from services.fetchers._store import is_any_active
 
-    if not is_any_active("ukraine_frontline"):
-        return
     try:
         from services.geopolitics import fetch_ukraine_frontlines
 
@@ -157,10 +149,7 @@ def fetch_frontlines():
 @with_retry(max_retries=1, base_delay=3)
 def fetch_gdelt():
     """Fetch GDELT global military incidents (slow — downloads 32 ZIP files)."""
-    from services.fetchers._store import is_any_active
 
-    if not is_any_active("global_incidents"):
-        return
     try:
         from services.geopolitics import fetch_global_military_incidents
 
@@ -180,10 +169,7 @@ def fetch_geopolitics():
 
 
 def update_liveuamap():
-    from services.fetchers._store import is_any_active
 
-    if not is_any_active("global_incidents"):
-        return
     logger.info("Running scheduled Liveuamap scraper...")
     try:
         from services.liveuamap_scraper import fetch_liveuamap
@@ -203,10 +189,7 @@ def update_liveuamap():
 @with_retry(max_retries=1, base_delay=5)
 def fetch_fishing_activity():
     """Fetch recent fishing events from Global Fishing Watch (~5 day lag)."""
-    from services.fetchers._store import is_any_active
 
-    if not is_any_active("fishing_activity"):
-        return
     token = os.environ.get("GFW_API_TOKEN", "")
     if not token:
         logger.debug("GFW_API_TOKEN not set, skipping fishing activity fetch")

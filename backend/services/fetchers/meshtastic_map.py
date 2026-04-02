@@ -135,10 +135,7 @@ def fetch_meshtastic_nodes():
     Stores processed nodes in latest_data["meshtastic_map_nodes"].
     Persists to JSON cache for restart resilience.
     """
-    from services.fetchers._store import is_any_active
 
-    if not is_any_active("sigint_meshtastic"):
-        return
     global _last_fetch_ts
 
     try:
