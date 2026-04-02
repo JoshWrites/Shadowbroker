@@ -61,6 +61,12 @@ import {
     buildGdeltGeoJSON, buildLiveuaGeoJSON, buildFrontlineGeoJSON,
     buildFlightLayerGeoJSON, buildUavGeoJSON,
     buildSatellitesGeoJSON, buildShipsGeoJSON, buildCarriersGeoJSON, buildTrainsGeoJSON,
+    buildPowerPlantsGeoJSON, buildPskReporterGeoJSON, buildSatnogsStationsGeoJSON,
+    buildTinygsGeoJSON, buildScannerGeoJSON, buildSigintGeoJSON,
+    buildMeshtasticGeoJSON, buildAprsGeoJSON,
+    buildWeatherAlertsGeoJSON, buildWeatherAlertLabelsGeoJSON,
+    buildAirQualityGeoJSON, buildVolcanoesGeoJSON, buildFishingActivityGeoJSON,
+    buildVIIRSChangeNodesGeoJSON, buildCorrelationsGeoJSON,
     BRANCH_COLORS,
     type FlightLayerConfig,
 } from "@/components/map/geoJSONBuilders";
@@ -254,6 +260,63 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
     const dataCentersGeoJSON = useMemo(() =>
         activeLayers.datacenters ? buildDataCentersGeoJSON(data?.datacenters) : null,
         [activeLayers.datacenters, data?.datacenters]);
+
+    // ── New upstream layers ──
+    const powerPlantsGeoJSON = useMemo(() =>
+        activeLayers.power_plants ? buildPowerPlantsGeoJSON(data?.power_plants) : null,
+        [activeLayers.power_plants, data?.power_plants]);
+
+    const pskReporterGeoJSON = useMemo(() =>
+        activeLayers.psk_reporter ? buildPskReporterGeoJSON(data?.psk_reporter, inView) : null,
+        [activeLayers.psk_reporter, data?.psk_reporter, inView]);
+
+    const satnogsGeoJSON = useMemo(() =>
+        activeLayers.satnogs ? buildSatnogsStationsGeoJSON(data?.satnogs_stations, inView) : null,
+        [activeLayers.satnogs, data?.satnogs_stations, inView]);
+
+    const tinygsGeoJSON = useMemo(() =>
+        activeLayers.tinygs ? buildTinygsGeoJSON(data?.tinygs_satellites, inView) : null,
+        [activeLayers.tinygs, data?.tinygs_satellites, inView]);
+
+    const scannerGeoJSON = useMemo(() =>
+        activeLayers.scanners ? buildScannerGeoJSON(data?.scanners, inView) : null,
+        [activeLayers.scanners, data?.scanners, inView]);
+
+    const meshtasticGeoJSON = useMemo(() =>
+        activeLayers.sigint_meshtastic ? buildMeshtasticGeoJSON(data?.sigint) : null,
+        [activeLayers.sigint_meshtastic, data?.sigint]);
+
+    const aprsGeoJSON = useMemo(() =>
+        activeLayers.sigint_aprs ? buildAprsGeoJSON(data?.sigint) : null,
+        [activeLayers.sigint_aprs, data?.sigint]);
+
+    const weatherAlertsGeoJSON = useMemo(() =>
+        activeLayers.weather_alerts ? buildWeatherAlertsGeoJSON(data?.weather_alerts) : null,
+        [activeLayers.weather_alerts, data?.weather_alerts]);
+
+    const weatherAlertLabelsGeoJSON = useMemo(() =>
+        activeLayers.weather_alerts ? buildWeatherAlertLabelsGeoJSON(data?.weather_alerts) : null,
+        [activeLayers.weather_alerts, data?.weather_alerts]);
+
+    const airQualityGeoJSON = useMemo(() =>
+        activeLayers.air_quality ? buildAirQualityGeoJSON(data?.air_quality) : null,
+        [activeLayers.air_quality, data?.air_quality]);
+
+    const volcanoesGeoJSON = useMemo(() =>
+        activeLayers.volcanoes ? buildVolcanoesGeoJSON(data?.volcanoes) : null,
+        [activeLayers.volcanoes, data?.volcanoes]);
+
+    const fishingGeoJSON = useMemo(() =>
+        activeLayers.fishing_activity ? buildFishingActivityGeoJSON(data?.fishing_activity) : null,
+        [activeLayers.fishing_activity, data?.fishing_activity]);
+
+    const viirsChangeNodesGeoJSON = useMemo(() =>
+        activeLayers.viirs_nightlights ? buildVIIRSChangeNodesGeoJSON(data?.viirs_change_nodes) : null,
+        [activeLayers.viirs_nightlights, data?.viirs_change_nodes]);
+
+    const correlationsGeoJSON = useMemo(() =>
+        activeLayers.correlations ? buildCorrelationsGeoJSON(data?.correlations) : null,
+        [activeLayers.correlations, data?.correlations]);
 
     // --- Military base polygon LOD: show outlines when base ≥ 50px on screen ---
     const PX_THRESHOLD = 50;
@@ -1029,6 +1092,14 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
         cfAnomaliesGeoJSON && 'cf-anomalies-layer',
         activeDdosGeoJSON && 'active-ddos-layer',
         activeDdosGeoJSON && 'active-ddos-pulse-layer',
+        powerPlantsGeoJSON && 'power-plants-layer',
+        pskReporterGeoJSON && 'psk-reporter-layer',
+        satnogsGeoJSON && 'satnogs-layer',
+        scannerGeoJSON && 'scanner-layer',
+        airQualityGeoJSON && 'air-quality-layer',
+        volcanoesGeoJSON && 'volcanoes-layer',
+        fishingGeoJSON && 'fishing-layer',
+        viirsChangeNodesGeoJSON && 'viirs-change-nodes-layer',
     ].filter(Boolean) as string[];
 
 
@@ -1042,6 +1113,18 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
     useImperativeSource(mapForHook, 'uavs', uavGeoJSON);
     useImperativeSource(mapForHook, 'satellites', satellitesGeoJSON);
     useImperativeSource(mapForHook, 'firms-fires', firmsGeoJSON, 2000);
+    // New upstream layers
+    useImperativeSource(mapForHook, 'tinygs', tinygsGeoJSON);
+    useImperativeSource(mapForHook, 'psk-reporter', pskReporterGeoJSON, 75);
+    useImperativeSource(mapForHook, 'satnogs', satnogsGeoJSON, 75);
+    useImperativeSource(mapForHook, 'scanners', scannerGeoJSON, 75);
+    useImperativeSource(mapForHook, 'power-plants', powerPlantsGeoJSON, 140);
+    useImperativeSource(mapForHook, 'viirs-change-nodes', viirsChangeNodesGeoJSON, 120);
+    useImperativeSource(mapForHook, 'air-quality-source', airQualityGeoJSON, 100);
+    useImperativeSource(mapForHook, 'volcanoes-source', volcanoesGeoJSON, 100);
+    useImperativeSource(mapForHook, 'fishing-source', fishingGeoJSON, 100);
+    useImperativeSource(mapForHook, 'meshtastic-source', meshtasticGeoJSON, 60);
+    useImperativeSource(mapForHook, 'aprs-source', aprsGeoJSON, 60);
 
     const handleMouseMove = useCallback((evt: any) => {
         if (onMouseCoords) onMouseCoords({ lat: evt.lngLat.lat, lng: evt.lngLat.lng });
@@ -2052,6 +2135,510 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                         />
                     </Source>
                 )}
+
+                {/* ═══ NEW UPSTREAM LAYERS ═══ */}
+
+                {/* Power Plants — amber clustered icons */}
+                {powerPlantsGeoJSON && (
+                    <Source id="power-plants" type="geojson" data={EMPTY_FC} cluster={true} clusterRadius={30} clusterMaxZoom={8}>
+                        <Layer
+                            id="power-plants-clusters"
+                            type="circle"
+                            minzoom={4}
+                            filter={['has', 'point_count']}
+                            paint={{
+                                'circle-color': '#92400e',
+                                'circle-radius': ['step', ['get', 'point_count'], 12, 10, 16, 50, 20],
+                                'circle-opacity': 0.7,
+                                'circle-stroke-width': 1,
+                                'circle-stroke-color': '#f59e0b',
+                            }}
+                        />
+                        <Layer
+                            id="power-plants-cluster-count"
+                            type="symbol"
+                            minzoom={4}
+                            filter={['has', 'point_count']}
+                            layout={{
+                                'text-field': '{point_count_abbreviated}',
+                                'text-font': ['Noto Sans Bold'],
+                                'text-size': 10,
+                                'text-allow-overlap': true,
+                            }}
+                            paint={{ 'text-color': '#fde68a' }}
+                        />
+                        <Layer
+                            id="power-plants-layer"
+                            type="circle"
+                            minzoom={4}
+                            filter={['!', ['has', 'point_count']]}
+                            paint={{
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 3, 6, 5, 10, 8],
+                                'circle-color': '#f59e0b',
+                                'circle-opacity': 0.8,
+                                'circle-stroke-width': 1,
+                                'circle-stroke-color': '#92400e',
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* PSK Reporter — green HF digital mode spots with clustering */}
+                {pskReporterGeoJSON && (
+                    <Source id="psk-reporter" type="geojson" data={EMPTY_FC} cluster={true} clusterRadius={50} clusterMaxZoom={14}>
+                        <Layer
+                            id="psk-reporter-cluster-pulse"
+                            type="circle"
+                            filter={['has', 'point_count']}
+                            minzoom={4}
+                            paint={{
+                                'circle-radius': ['step', ['get', 'point_count'], 20, 10, 26, 50, 32, 200, 40],
+                                'circle-color': 'rgba(34, 197, 94, 0.08)',
+                                'circle-stroke-width': 1.5,
+                                'circle-stroke-color': 'rgba(34, 197, 94, 0.35)',
+                                'circle-blur': 0.4,
+                            }}
+                        />
+                        <Layer
+                            id="psk-reporter-clusters"
+                            type="circle"
+                            filter={['has', 'point_count']}
+                            minzoom={4}
+                            paint={{
+                                'circle-radius': ['step', ['get', 'point_count'], 12, 10, 16, 50, 20, 200, 26],
+                                'circle-color': 'rgba(34, 197, 94, 0.6)',
+                                'circle-stroke-width': 1.5,
+                                'circle-stroke-color': 'rgba(34, 197, 94, 0.9)',
+                            }}
+                        />
+                        <Layer
+                            id="psk-reporter-layer"
+                            type="circle"
+                            filter={['!', ['has', 'point_count']]}
+                            minzoom={4}
+                            paint={{
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 2.5, 8, 4, 14, 6],
+                                'circle-color': '#22c55e',
+                                'circle-stroke-width': 0.5,
+                                'circle-stroke-color': 'rgba(34, 197, 94, 0.8)',
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* SatNOGS Ground Stations — teal clustered circles */}
+                {satnogsGeoJSON && (
+                    <Source id="satnogs" type="geojson" data={EMPTY_FC} cluster={true} clusterRadius={50} clusterMaxZoom={14}>
+                        <Layer
+                            id="satnogs-clusters"
+                            type="circle"
+                            filter={['has', 'point_count']}
+                            paint={{
+                                'circle-radius': ['step', ['get', 'point_count'], 12, 10, 16, 50, 20],
+                                'circle-color': 'rgba(20, 184, 166, 0.6)',
+                                'circle-stroke-width': 1.5,
+                                'circle-stroke-color': 'rgba(20, 184, 166, 0.9)',
+                            }}
+                        />
+                        <Layer
+                            id="satnogs-layer"
+                            type="circle"
+                            filter={['!', ['has', 'point_count']]}
+                            paint={{
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 3, 8, 5, 14, 7],
+                                'circle-color': '#14b8a6',
+                                'circle-opacity': 0.85,
+                                'circle-stroke-width': 1,
+                                'circle-stroke-color': '#0d9488',
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* TinyGS LoRa Satellites — purple circles */}
+                {tinygsGeoJSON && (
+                    <Source id="tinygs" type="geojson" data={EMPTY_FC}>
+                        <Layer
+                            id="tinygs-layer"
+                            type="circle"
+                            paint={{
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 0, 3, 6, 5, 10, 8],
+                                'circle-color': '#c084fc',
+                                'circle-opacity': 0.85,
+                                'circle-stroke-width': 1,
+                                'circle-stroke-color': '#9333ea',
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* Police Scanners (OpenMHZ) — red clustered circles */}
+                {scannerGeoJSON && (
+                    <Source id="scanners" type="geojson" data={EMPTY_FC} cluster={true} clusterRadius={50} clusterMaxZoom={14}>
+                        <Layer
+                            id="scanner-cluster-pulse"
+                            type="circle"
+                            filter={['has', 'point_count']}
+                            paint={{
+                                'circle-radius': ['step', ['get', 'point_count'], 20, 10, 26, 50, 32, 200, 40],
+                                'circle-color': 'rgba(220, 38, 38, 0.08)',
+                                'circle-stroke-width': 1.5,
+                                'circle-stroke-color': 'rgba(220, 38, 38, 0.35)',
+                                'circle-blur': 0.4,
+                            }}
+                        />
+                        <Layer
+                            id="scanner-clusters"
+                            type="circle"
+                            filter={['has', 'point_count']}
+                            paint={{
+                                'circle-radius': ['step', ['get', 'point_count'], 12, 10, 16, 50, 20],
+                                'circle-color': 'rgba(220, 38, 38, 0.6)',
+                                'circle-stroke-width': 1.5,
+                                'circle-stroke-color': 'rgba(220, 38, 38, 0.9)',
+                            }}
+                        />
+                        <Layer
+                            id="scanner-layer"
+                            type="circle"
+                            filter={['!', ['has', 'point_count']]}
+                            paint={{
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 3, 8, 5, 14, 7],
+                                'circle-color': '#dc2626',
+                                'circle-opacity': 0.8,
+                                'circle-stroke-width': 1,
+                                'circle-stroke-color': '#991b1b',
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* Meshtastic — green circle clusters */}
+                {meshtasticGeoJSON && (
+                    <Source id="meshtastic-source" type="geojson" data={EMPTY_FC} cluster={true} clusterRadius={42} clusterMaxZoom={8}>
+                        <Layer
+                            id="meshtastic-clusters"
+                            type="circle"
+                            filter={['has', 'point_count']}
+                            paint={{
+                                'circle-radius': ['step', ['get', 'point_count'], 12, 10, 16, 50, 22, 100, 28],
+                                'circle-color': 'rgba(34, 197, 94, 0.5)',
+                                'circle-stroke-width': 2,
+                                'circle-stroke-color': '#86efac',
+                            }}
+                        />
+                        <Layer
+                            id="meshtastic-cluster-count"
+                            type="symbol"
+                            filter={['has', 'point_count']}
+                            layout={{
+                                'text-field': ['get', 'point_count_abbreviated'],
+                                'text-size': 11,
+                                'text-font': ['Noto Sans Bold'],
+                                'text-allow-overlap': true,
+                            }}
+                            paint={{
+                                'text-color': '#052e16',
+                                'text-halo-color': '#86efac',
+                                'text-halo-width': 0.8,
+                            }}
+                        />
+                        <Layer
+                            id="meshtastic-circles"
+                            type="circle"
+                            filter={['!', ['has', 'point_count']]}
+                            paint={{
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 3, 8, 5, 14, 7],
+                                'circle-color': '#22c55e',
+                                'circle-opacity': 0.85,
+                                'circle-stroke-width': 1,
+                                'circle-stroke-color': '#15803d',
+                            }}
+                        />
+                        <Layer
+                            id="meshtastic-labels"
+                            type="symbol"
+                            minzoom={8}
+                            layout={{
+                                'text-field': ['get', 'callsign'],
+                                'text-size': 9,
+                                'text-offset': [0, 1.2],
+                                'text-anchor': 'top',
+                                'text-font': ['Noto Sans Regular'],
+                                'text-allow-overlap': false,
+                            }}
+                            paint={{
+                                'text-color': '#86efac',
+                                'text-halo-color': 'rgba(0,0,0,0.8)',
+                                'text-halo-width': 1,
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* APRS / JS8Call — pink circle clusters */}
+                {aprsGeoJSON && (
+                    <Source id="aprs-source" type="geojson" data={EMPTY_FC} cluster={true} clusterRadius={42} clusterMaxZoom={8}>
+                        <Layer
+                            id="aprs-clusters"
+                            type="circle"
+                            filter={['has', 'point_count']}
+                            paint={{
+                                'circle-radius': ['step', ['get', 'point_count'], 12, 10, 16, 50, 22, 100, 28],
+                                'circle-color': 'rgba(244, 114, 182, 0.5)',
+                                'circle-stroke-width': 2,
+                                'circle-stroke-color': '#f9a8d4',
+                            }}
+                        />
+                        <Layer
+                            id="aprs-cluster-count"
+                            type="symbol"
+                            filter={['has', 'point_count']}
+                            layout={{
+                                'text-field': ['get', 'point_count_abbreviated'],
+                                'text-size': 11,
+                                'text-font': ['Noto Sans Bold'],
+                                'text-allow-overlap': true,
+                            }}
+                            paint={{
+                                'text-color': '#4a0525',
+                                'text-halo-color': '#f9a8d4',
+                                'text-halo-width': 0.8,
+                            }}
+                        />
+                        <Layer
+                            id="aprs-triangles"
+                            type="circle"
+                            filter={['!', ['has', 'point_count']]}
+                            paint={{
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 3, 8, 5, 14, 7],
+                                'circle-color': '#f472b6',
+                                'circle-opacity': 0.85,
+                                'circle-stroke-width': 1,
+                                'circle-stroke-color': '#be185d',
+                            }}
+                        />
+                        <Layer
+                            id="aprs-labels"
+                            type="symbol"
+                            minzoom={8}
+                            layout={{
+                                'text-field': ['get', 'callsign'],
+                                'text-size': 9,
+                                'text-offset': [0, 1.2],
+                                'text-anchor': 'top',
+                                'text-font': ['Noto Sans Regular'],
+                                'text-allow-overlap': false,
+                            }}
+                            paint={{
+                                'text-color': '#f9a8d4',
+                                'text-halo-color': 'rgba(0,0,0,0.8)',
+                                'text-halo-width': 1,
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* Weather Alerts — severity-colored polygons with label overlay */}
+                {weatherAlertsGeoJSON && (
+                    <Source id="weather-alerts-source" type="geojson" data={(weatherAlertsGeoJSON as any)}>
+                        <Layer
+                            id="weather-alerts-fill"
+                            type="fill"
+                            paint={{
+                                'fill-color': ['get', 'color'],
+                                'fill-opacity': 0.12,
+                            }}
+                        />
+                        <Layer
+                            id="weather-alerts-outline"
+                            type="line"
+                            paint={{
+                                'line-color': ['get', 'color'],
+                                'line-width': 2,
+                                'line-opacity': 0.7,
+                                'line-dasharray': [4, 3],
+                            }}
+                        />
+                    </Source>
+                )}
+                {weatherAlertLabelsGeoJSON && (
+                    <Source id="weather-alert-labels-source" type="geojson" data={(weatherAlertLabelsGeoJSON as any)}>
+                        <Layer
+                            id="weather-alert-icons"
+                            type="symbol"
+                            layout={{
+                                'text-field': ['get', 'event'],
+                                'text-font': ['Noto Sans Bold'],
+                                'text-size': 11,
+                                'text-allow-overlap': false,
+                                'text-max-width': 14,
+                            }}
+                            paint={{
+                                'text-color': ['get', 'color'],
+                                'text-halo-color': '#000000',
+                                'text-halo-width': 1.5,
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* Air Quality — AQI-colored circles */}
+                {airQualityGeoJSON && (
+                    <Source id="air-quality-source" type="geojson" data={EMPTY_FC} cluster={true} clusterMaxZoom={8} clusterRadius={40}>
+                        <Layer
+                            id="air-quality-clusters"
+                            type="circle"
+                            filter={['has', 'point_count']}
+                            paint={{
+                                'circle-radius': ['step', ['get', 'point_count'], 12, 10, 16, 50, 20],
+                                'circle-color': '#94a3b8',
+                                'circle-opacity': 0.6,
+                            }}
+                        />
+                        <Layer
+                            id="air-quality-layer"
+                            type="circle"
+                            filter={['!', ['has', 'point_count']]}
+                            paint={{
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 3, 6, 5, 10, 8],
+                                'circle-color': ['get', 'color'],
+                                'circle-opacity': 0.75,
+                                'circle-stroke-width': 1,
+                                'circle-stroke-color': '#000',
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* Volcanoes — orange-colored circles */}
+                {volcanoesGeoJSON && (
+                    <Source id="volcanoes-source" type="geojson" data={EMPTY_FC}>
+                        <Layer
+                            id="volcanoes-layer"
+                            type="circle"
+                            paint={{
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 4, 6, 7, 10, 10],
+                                'circle-color': '#f97316',
+                                'circle-opacity': 0.85,
+                                'circle-stroke-width': 1.5,
+                                'circle-stroke-color': '#c2410c',
+                            }}
+                        />
+                        <Layer
+                            id="volcanoes-label"
+                            type="symbol"
+                            layout={{
+                                'text-field': ['step', ['zoom'], '', 6, ['get', 'name']],
+                                'text-font': ['Noto Sans Bold'],
+                                'text-size': 10,
+                                'text-offset': [0, 1.2],
+                                'text-anchor': 'top',
+                                'text-allow-overlap': false,
+                            }}
+                            paint={{
+                                'text-color': '#f97316',
+                                'text-halo-color': 'rgba(0,0,0,0.9)',
+                                'text-halo-width': 1,
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* Fishing Activity — sky blue clustered circles */}
+                {fishingGeoJSON && (
+                    <Source id="fishing-source" type="geojson" data={EMPTY_FC} cluster={true} clusterMaxZoom={6} clusterRadius={50}>
+                        <Layer
+                            id="fishing-clusters"
+                            type="circle"
+                            filter={['has', 'point_count']}
+                            paint={{
+                                'circle-radius': ['step', ['get', 'point_count'], 12, 10, 16, 50, 22],
+                                'circle-color': '#0ea5e9',
+                                'circle-opacity': 0.6,
+                            }}
+                        />
+                        <Layer
+                            id="fishing-layer"
+                            type="circle"
+                            filter={['!', ['has', 'point_count']]}
+                            paint={{
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 3, 6, 5, 10, 7],
+                                'circle-color': '#0ea5e9',
+                                'circle-opacity': 0.7,
+                                'circle-stroke-width': 1,
+                                'circle-stroke-color': '#0369a1',
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* VIIRS Change Detection Nodes */}
+                {viirsChangeNodesGeoJSON && (
+                    <Source id="viirs-change-nodes" type="geojson" data={EMPTY_FC}>
+                        <Layer
+                            id="viirs-change-nodes-layer"
+                            type="circle"
+                            paint={{
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 4, 6, 8, 10, 12],
+                                'circle-color': ['get', 'color'],
+                                'circle-opacity': 0.85,
+                                'circle-stroke-width': 1,
+                                'circle-stroke-color': 'rgba(255,255,255,0.4)',
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* Correlation Alerts — Emergent Intelligence grid squares */}
+                {correlationsGeoJSON && (
+                    <Source id="correlations" type="geojson" data={(correlationsGeoJSON as any)}>
+                        <Layer
+                            id="corr-rf-fill"
+                            type="fill"
+                            filter={['==', ['get', 'corr_type'], 'rf_anomaly']}
+                            minzoom={3}
+                            paint={{ 'fill-color': '#6b7280', 'fill-opacity': ['get', 'opacity'] }}
+                        />
+                        <Layer
+                            id="corr-rf-outline"
+                            type="line"
+                            filter={['==', ['get', 'corr_type'], 'rf_anomaly']}
+                            minzoom={3}
+                            paint={{ 'line-color': '#6b7280', 'line-width': 1.5, 'line-opacity': 0.6 }}
+                        />
+                        <Layer
+                            id="corr-mil-fill"
+                            type="fill"
+                            filter={['==', ['get', 'corr_type'], 'military_buildup']}
+                            minzoom={3}
+                            paint={{ 'fill-color': '#dc2626', 'fill-opacity': ['get', 'opacity'] }}
+                        />
+                        <Layer
+                            id="corr-mil-outline"
+                            type="line"
+                            filter={['==', ['get', 'corr_type'], 'military_buildup']}
+                            minzoom={3}
+                            paint={{ 'line-color': '#dc2626', 'line-width': 2, 'line-opacity': 0.7, 'line-dasharray': [4, 2] }}
+                        />
+                        <Layer
+                            id="corr-infra-fill"
+                            type="fill"
+                            filter={['==', ['get', 'corr_type'], 'infra_cascade']}
+                            minzoom={3}
+                            paint={{ 'fill-color': '#1f2937', 'fill-opacity': ['get', 'opacity'] }}
+                        />
+                        <Layer
+                            id="corr-infra-outline"
+                            type="line"
+                            filter={['==', ['get', 'corr_type'], 'infra_cascade']}
+                            minzoom={3}
+                            paint={{ 'line-color': '#374151', 'line-width': 1.5, 'line-opacity': 0.6 }}
+                        />
+                    </Source>
+                )}
+
+                {/* ═══ END NEW UPSTREAM LAYERS ═══ */}
 
                 {/* Military Base polygon outlines (LOD — visible when zoomed in) */}
                 {milBasePolygonGeoJSON && (
