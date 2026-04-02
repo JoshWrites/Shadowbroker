@@ -12,6 +12,8 @@ import FilterPanel from "@/components/FilterPanel";
 import FindLocateBar from "@/components/FindLocateBar";
 import TopRightControls from "@/components/TopRightControls";
 import RadioInterceptPanel from "@/components/RadioInterceptPanel";
+import PredictionsPanel from "@/components/PredictionsPanel";
+import GlobalTicker from "@/components/GlobalTicker";
 import SettingsPanel from "@/components/SettingsPanel";
 import MapLegend from "@/components/MapLegend";
 import ScaleBar from "@/components/ScaleBar";
@@ -22,7 +24,7 @@ import ChangelogModal, { useChangelog } from "@/components/ChangelogModal";
 import type { SelectedEntity, PikudAlert, BgpAnomaly, CfAnomaly, MilBaseBranch } from "@/types/dashboard";
 import { API_BASE, BACKEND_DIRECT } from "@/lib/api";
 import { NOMINATIM_DEBOUNCE_MS } from "@/lib/constants";
-import { useDataPolling } from "@/hooks/useDataPolling";
+import { useDataPolling, LAYER_TOGGLE_EVENT } from "@/hooks/useDataPolling";
 import type { UkraineAlert } from "@/types/dashboard";
 import { useReverseGeocode } from "@/hooks/useReverseGeocode";
 import { useRegionDossier } from "@/hooks/useRegionDossier";
@@ -163,6 +165,22 @@ export default function Dashboard() {
     weather_pressure: false,
     weather_wind: false,
     weather_temperature: false,
+    // New upstream layers
+    scanners: false,
+    power_plants: false,
+    sigint_meshtastic: false,
+    sigint_aprs: false,
+    weather_alerts: false,
+    air_quality: false,
+    volcanoes: false,
+    fishing_activity: false,
+    satnogs: false,
+    tinygs: false,
+    psk_reporter: false,
+    correlations: false,
+    shodan_overlay: false,
+    viirs_nightlights: false,
+    sentinel_hub: false,
   });
 
   const { data, dataVersion, backendStatus, layerErrors } = useDataPolling(activeLayers);
@@ -200,6 +218,22 @@ export default function Dashboard() {
       .catch(e => { if (e.name !== 'AbortError') { console.error('[cctv seed]', e); setCctvLoading(false); } });
     return () => controller.abort();
   }, [activeLayers.cctv, data?.cctv?.length]);
+
+  // Notify backend of layer toggles — dispatch event so useDataPolling immediately
+  // refetches slow-tier data (power plants, GDELT, etc.) without the 120s wait.
+  const layersTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const initialLayerSyncRef = useRef(false);
+  useEffect(() => {
+    if (layersTimerRef.current) clearTimeout(layersTimerRef.current);
+    if (!initialLayerSyncRef.current) {
+      initialLayerSyncRef.current = true;
+    } else {
+      layersTimerRef.current = setTimeout(() => {
+        window.dispatchEvent(new Event(LAYER_TOGGLE_EVENT));
+      }, 250);
+    }
+    return () => { if (layersTimerRef.current) clearTimeout(layersTimerRef.current); };
+  }, [activeLayers]);
 
   // Military base filter: owner country → enabled branches (built from data on first load)
   const [milBaseFilter, setMilBaseFilter] = useState<Record<string, Set<MilBaseBranch>>>({});
@@ -517,6 +551,13 @@ export default function Dashboard() {
               </ErrorBoundary>
             </div>
 
+            {/* ORACLE PREDICTIONS */}
+            <div className="flex-shrink-0">
+              <ErrorBoundary name="PredictionsPanel">
+                <PredictionsPanel />
+              </ErrorBoundary>
+            </div>
+
             {/* DATA FILTERS */}
             <div className="flex-shrink-0">
               <ErrorBoundary name="FilterPanel">
@@ -659,6 +700,13 @@ export default function Dashboard() {
           </span>
         </div>
       )}
+
+      {/* GLOBAL MARKETS TICKER (BOTTOM ANCHOR) */}
+      <div className="absolute bottom-0 left-0 right-0 z-[8000] h-7">
+        <ErrorBoundary name="GlobalTicker">
+          <GlobalTicker />
+        </ErrorBoundary>
+      </div>
 
     </main>
     </DashboardDataProvider>
