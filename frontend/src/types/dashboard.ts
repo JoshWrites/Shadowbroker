@@ -1007,21 +1007,21 @@ export interface ActiveLayers {
   weather_wind: boolean;
   weather_temperature: boolean;
   // Upstream-added layer toggles
-  psk_reporter?: boolean;
-  satnogs?: boolean;
-  tinygs?: boolean;
-  scanners?: boolean;
-  power_plants?: boolean;
-  sigint_meshtastic?: boolean;
-  sigint_aprs?: boolean;
-  weather_alerts?: boolean;
-  air_quality?: boolean;
-  volcanoes?: boolean;
-  fishing_activity?: boolean;
-  sentinel_hub?: boolean;
-  shodan_overlay?: boolean;
-  viirs_nightlights?: boolean;
-  correlations?: boolean;
+  psk_reporter: boolean;
+  satnogs: boolean;
+  tinygs: boolean;
+  scanners: boolean;
+  power_plants: boolean;
+  sigint_meshtastic: boolean;
+  sigint_aprs: boolean;
+  weather_alerts: boolean;
+  air_quality: boolean;
+  volcanoes: boolean;
+  fishing_activity: boolean;
+  sentinel_hub: boolean;
+  shodan_overlay: boolean;
+  viirs_nightlights: boolean;
+  correlations: boolean;
 }
 
 export interface SelectedEntity {
