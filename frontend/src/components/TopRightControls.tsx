@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Github, MessageSquare, Download, AlertCircle, CheckCircle2, RefreshCw, ExternalLink, X } from "lucide-react";
+import { Github, MessageSquare, Download, AlertCircle, CheckCircle2, RefreshCw, ExternalLink, X, Terminal } from "lucide-react";
 import { API_BASE } from "@/lib/api";
 import packageJson from "../../package.json";
 
@@ -16,7 +16,11 @@ type UpdateStatus =
     | "restarting"
     | "update_error";
 
-export default function TopRightControls() {
+interface TopRightControlsProps {
+    onTerminalToggle?: () => void;
+}
+
+export default function TopRightControls({ onTerminalToggle }: TopRightControlsProps = {}) {
     const [updateStatus, setUpdateStatus] = useState<UpdateStatus>("idle");
     const [latestVersion, setLatestVersion] = useState<string>("");
     const [errorMessage, setErrorMessage] = useState("");
@@ -194,6 +198,18 @@ export default function TopRightControls() {
 
     return (
         <div className="relative flex items-center gap-2 mb-1 justify-end">
+            {/* Mesh Terminal toggle — only shown when the prop is wired up */}
+            {onTerminalToggle && (
+                <button
+                    onClick={onTerminalToggle}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[var(--bg-primary)]/50 backdrop-blur-md border border-[var(--border-primary)] rounded-lg hover:border-cyan-500/50 hover:bg-[var(--hover-accent)] transition-all text-[10px] text-[var(--text-secondary)] font-mono cursor-pointer"
+                    title="Toggle Mesh Terminal"
+                >
+                    <Terminal size={12} className="text-cyan-400 w-3 h-3" />
+                    <span className="tracking-widest">TERMINAL</span>
+                </button>
+            )}
+
             {/* Discussions link */}
             <a
                 href="https://github.com/BigBodyCobain/Shadowbroker/discussions"
