@@ -71,6 +71,18 @@ from services.fetchers.fimi import fetch_fimi  # noqa: F401
 from services.fetchers.unusual_whales import fetch_unusual_whales  # noqa: F401
 from services.fetchers._store import bump_data_version  # noqa: F401
 
+# Additional upstream OSINT fetcher modules
+from services.fetchers.crowdthreat import fetch_crowdthreat  # noqa: F401
+from services.fetchers.wastewater import fetch_wastewater  # noqa: F401
+from services.fetchers.sar_catalog import fetch_sar_catalog  # noqa: F401
+from services.fetchers.sar_products import fetch_sar_products  # noqa: F401
+from services.fetchers.flight_observations import prune as _prune_flight_observations  # noqa: F401
+from services.fetchers.aishub_fallback import (  # noqa: F401
+    fetch_aishub_vessels, aishub_poll_interval_minutes,
+)
+from services.fetchers.route_database import refresh_route_database  # noqa: F401
+from services.fetchers.aircraft_database import refresh_aircraft_database  # noqa: F401
+
 # Upstream fetcher functions that may not yet exist in our modules —
 # import conditionally so file parses even before those modules are merged.
 try:
@@ -389,6 +401,22 @@ def start_scheduler():
             'interval', minutes=5, id='ais_prune', max_instances=1, misfire_grace_time=60,
         )
 
+    # Flight observation pruning — drops stale icao24 → first_seen_at entries
+    # we haven't seen in an hour. Same cadence as AIS prune for symmetry.
+    _scheduler.add_job(
+        lambda: _run_task_with_health(_prune_flight_observations, "prune_flight_observations"),
+        'interval', minutes=5, id='flight_observation_prune', max_instances=1, misfire_grace_time=60,
+    )
+
+    # AISHub REST fallback — slow polling when the AISStream WebSocket primary
+    # is offline. Interval configurable via AISHUB_POLL_INTERVAL_MINUTES (default
+    # 20 min). Gated internally on the primary being disconnected.
+    _aishub_interval = aishub_poll_interval_minutes()
+    _scheduler.add_job(
+        lambda: _run_task_with_health(fetch_aishub_vessels, "fetch_aishub_vessels"),
+        'interval', minutes=_aishub_interval, id='aishub_fallback', max_instances=1, misfire_grace_time=120,
+    )
+
     # Very slow — every 15 minutes
     _scheduler.add_job(
         lambda: _run_task_with_health(fetch_gdelt, "fetch_gdelt"),
@@ -438,6 +466,44 @@ def start_scheduler():
     _scheduler.add_job(
         lambda: _run_task_with_health(fetch_fimi, "fetch_fimi"),
         'interval', hours=12, id='fimi', max_instances=1, misfire_grace_time=600,
+    )
+
+    # SAR catalog (Mode A) — every hour, free metadata from ASF Search.
+    _scheduler.add_job(
+        lambda: _run_task_with_health(fetch_sar_catalog, "fetch_sar_catalog"),
+        'interval', hours=1, id='sar_catalog', max_instances=1, misfire_grace_time=600,
+        next_run_time=datetime.utcnow() + timedelta(minutes=3),
+    )
+
+    # SAR products (Mode B) — every 30 minutes, opt-in only (gated internally).
+    _scheduler.add_job(
+        lambda: _run_task_with_health(fetch_sar_products, "fetch_sar_products"),
+        'interval', minutes=30, id='sar_products', max_instances=1, misfire_grace_time=600,
+        next_run_time=datetime.utcnow() + timedelta(minutes=5),
+    )
+
+    # WastewaterSCAN pathogen surveillance — daily at 12:00 UTC
+    _scheduler.add_job(
+        lambda: _run_task_with_health(fetch_wastewater, "fetch_wastewater"),
+        'cron', hour=12, minute=0, id='wastewater_daily', max_instances=1, misfire_grace_time=3600,
+    )
+
+    # CrowdThreat verified threat intelligence — daily at 12:00 UTC
+    _scheduler.add_job(
+        lambda: _run_task_with_health(fetch_crowdthreat, "fetch_crowdthreat"),
+        'cron', hour=12, minute=0, id='crowdthreat_daily', max_instances=1, misfire_grace_time=3600,
+    )
+
+    # Route database — bulk refresh from vrs-standing-data.adsb.lol every 5 days.
+    _scheduler.add_job(
+        lambda: _run_task_with_health(refresh_route_database, "refresh_route_database"),
+        'interval', days=5, id='route_database', max_instances=1, misfire_grace_time=3600,
+    )
+
+    # Aircraft metadata database — bulk refresh from OpenSky S3 every 5 days.
+    _scheduler.add_job(
+        lambda: _run_task_with_health(refresh_aircraft_database, "refresh_aircraft_database"),
+        'interval', days=5, id='aircraft_database', max_instances=1, misfire_grace_time=3600,
     )
 
     # CCTV pipeline refresh
