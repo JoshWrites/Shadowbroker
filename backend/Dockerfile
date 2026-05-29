@@ -10,9 +10,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
+# Install Playwright's Chromium into a fixed system path (not root's home) so
+# the non-root runtime user (backenduser, home=/nonexistent) can find it.
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
-    && playwright install --with-deps chromium
+    && playwright install --with-deps chromium \
+    && chmod -R a+rX /opt/playwright
 
 # Install Node.js dependencies (ws module for AIS WebSocket proxy)
 # Copy manifests first so this layer is cached unless deps change

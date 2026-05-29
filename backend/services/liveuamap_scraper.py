@@ -43,47 +43,73 @@ def fetch_liveuamap():
                 except (TimeoutError, OSError):  # non-critical: page load delay
                     pass
                 
-                html = page.content()
-                
-                m = re.search(r"var\s+ovens\s*=\s*(.*?);(?!function)", html, re.DOTALL)
-                if not m:
-                    logger.warning(f"Could not find 'ovens' data for {region['name']} in raw HTML")
-                    # Let's try grabbing the evaluated JavaScript variable if it's there
-                    try:
-                        ovens_json = page.evaluate("() => typeof ovens !== 'undefined' ? JSON.stringify(ovens) : null")
-                        if ovens_json:
-                            markers = json.loads(ovens_json)
-                            # process below
-                            html = f"var ovens={ovens_json};"
-                            m = re.search(r"var\s+ovens=(.*?);", html, re.DOTALL)
-                    except (ValueError, KeyError, OSError) as e:  # non-critical: JS eval fallback
-                        logger.debug(f"Could not evaluate ovens JS variable for {region['name']}: {e}")
-                
-                if m:
-                    json_str = m.group(1).strip()
-                    if json_str.startswith("'") or json_str.startswith('"'):
-                        json_str = json_str.strip('"\'')
-                        json_str = base64.b64decode(urllib.parse.unquote(json_str)).decode('utf-8')
-                        
-                    try:
-                        markers = json.loads(json_str)
-                        for marker in markers:
-                            mid = marker.get("id")
-                            if mid and mid not in seen_ids:
-                                seen_ids.add(mid)
-                                all_markers.append({
-                                    "id": mid,
-                                    "type": "liveuamap",
-                                    "title": marker.get("s", "Unknown Event") or marker.get("title", ""),
-                                    "lat": marker.get("lat"),
-                                    "lng": marker.get("lng"),
-                                    "timestamp": marker.get("time", ""),
-                                    "link": marker.get("link", region["url"]),
-                                    "region": region["name"]
-                                })
-                    except (json.JSONDecodeError, ValueError, KeyError) as e:
-                        logger.error(f"Error parsing JSON for {region['name']}: {e}")
-                        
+                # Read the in-page `ovens` object directly (more robust than
+                # regex-scraping the HTML). As of 2026 Liveuamap ships it as a
+                # dict {last, venues:[...], fields}; older builds shipped a bare
+                # list of markers. Normalize both to a list of marker dicts.
+                ovens = None
+                try:
+                    ovens = page.evaluate("() => (typeof ovens !== 'undefined') ? ovens : null")
+                except Exception as e:  # JS eval failed (page not ready / blocked)
+                    logger.debug(f"Could not evaluate ovens for {region['name']}: {e}")
+
+                if ovens is None:
+                    # Fallback: pull `var ovens = ...;` straight from the HTML and
+                    # decode the (sometimes base64+urlencoded) payload.
+                    html = page.content()
+                    m = re.search(r"var\s+ovens\s*=\s*(.*?);(?!function)", html, re.DOTALL)
+                    if m:
+                        json_str = m.group(1).strip()
+                        if json_str.startswith("'") or json_str.startswith('"'):
+                            json_str = json_str.strip('"\'')
+                            try:
+                                json_str = base64.b64decode(urllib.parse.unquote(json_str)).decode('utf-8')
+                            except (ValueError, UnicodeDecodeError):
+                                pass  # not base64-encoded; use as-is
+                        try:
+                            ovens = json.loads(json_str)
+                        except (json.JSONDecodeError, ValueError) as e:
+                            logger.error(f"Error parsing ovens JSON for {region['name']}: {e}")
+
+                if ovens is None:
+                    logger.warning(f"Could not find 'ovens' data for {region['name']}")
+                    continue
+
+                # Normalize to the list of marker dicts.
+                if isinstance(ovens, dict):
+                    markers = ovens.get("venues") or []
+                elif isinstance(ovens, list):
+                    markers = ovens
+                else:
+                    markers = []
+
+                for marker in markers:
+                    if not isinstance(marker, dict):
+                        continue
+                    mid = marker.get("id")
+                    if mid and mid not in seen_ids:
+                        # lat/lng now arrive as strings ("33.3722600") — coerce
+                        # to float and skip markers without usable coordinates.
+                        try:
+                            lat = float(marker.get("lat"))
+                            lng = float(marker.get("lng"))
+                        except (TypeError, ValueError):
+                            continue
+                        seen_ids.add(mid)
+                        all_markers.append({
+                            "id": mid,
+                            "type": "liveuamap",
+                            # field renames: title is now `name` (was `s`);
+                            # link is now `source` (was `link`).
+                            "title": marker.get("name") or marker.get("s", "") or marker.get("title", "") or "Unknown Event",
+                            "lat": lat,
+                            "lng": lng,
+                            # prefer the human "time" string; keep epoch too.
+                            "timestamp": marker.get("time", "") or marker.get("timestamp", ""),
+                            "link": marker.get("source") or marker.get("link") or region["url"],
+                            "region": region["name"]
+                        })
+
             except Exception as e:
                 logger.error(f"Error scraping Liveuamap {region['name']}: {e}")
                 
