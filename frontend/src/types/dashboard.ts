@@ -832,6 +832,123 @@ export interface CorrelationAlert {
   cell_size: number;
 }
 
+// ─── UAP SIGHTINGS (upstream-added) ─────────────────────────────────────────
+
+export interface UAPSighting {
+  id: string;
+  date_time: string;
+  city: string;
+  state: string;
+  country: string;
+  shape: string;
+  shape_raw: string;
+  duration: string;
+  summary: string;
+  posted: string;
+  lat: number;
+  lng: number;
+  source: string;
+}
+
+// ─── WASTEWATER SCAN (upstream-added) ───────────────────────────────────────
+
+export interface WastewaterPathogen {
+  name: string;
+  target_key: string;
+  concentration: number;
+  normalized: number;
+  activity: string;
+  alert: boolean;
+}
+
+export interface WastewaterPlant {
+  id: string;
+  name: string;
+  site_name: string;
+  city: string;
+  state: string;
+  country: string;
+  population: number | null;
+  lat: number;
+  lng: number;
+  pathogens: WastewaterPathogen[];
+  alert_count: number;
+  collection_date: string;
+  source: string;
+}
+
+// ─── CROWDTHREAT (upstream-added) ───────────────────────────────────────────
+
+export interface CrowdThreatItem {
+  id: number;
+  title: string;
+  summary?: string;
+  lat: number;
+  lng: number;
+  address: string;
+  city: string;
+  country?: string;
+  category: string;
+  category_id: number;
+  category_colour: string;
+  subcategory: string;
+  threat_type: string;
+  icon_id: string;
+  occurred: string;
+  occurred_iso?: string;
+  timeago: string;
+  reported?: string;
+  verification?: string;
+  severity?: string;
+  source_url?: string;
+  media_urls?: string[];
+  votes?: number;
+  reporter?: string;
+  source: string;
+}
+
+// ─── SAR (Synthetic Aperture Radar) ANOMALIES & AOIs (upstream-added) ────────
+
+export interface SarAnomaly {
+  anomaly_id: string;
+  kind: string;
+  lat: number;
+  lon: number;
+  magnitude: number;
+  magnitude_unit: string;
+  confidence: number;
+  first_seen: number;
+  last_seen: number;
+  aoi_id: string;
+  scene_count: number;
+  solver: string;
+  source_constellation: string;
+  provenance_url: string;
+  category: string;
+  title: string;
+  summary: string;
+  evidence_hash?: string;
+  extras?: Record<string, unknown>;
+}
+
+export interface SarAoi {
+  id: string;
+  name: string;
+  description?: string;
+  center: [number, number]; // [lat, lon]
+  radius_km: number;
+  polygon?: number[][] | null;
+  category: string;
+}
+
+export interface SarAoiCoverage {
+  aoi_id: string;
+  scene_count?: number;
+  last_pass?: string;
+  next_pass?: string;
+  [key: string]: unknown;
+}
+
 // ─── THREAT LEVEL ───────────────────────────────────────────────────────────
 
 export interface ThreatLevel {
@@ -956,6 +1073,14 @@ export interface DashboardData {
   // Cross-layer correlations
   correlations?: CorrelationAlert[];
 
+  // Upstream-added OSINT layers
+  uap_sightings?: UAPSighting[];
+  wastewater?: WastewaterPlant[];
+  crowdthreat?: CrowdThreatItem[];
+  sar_anomalies?: SarAnomaly[];
+  sar_aois?: SarAoi[];
+  sar_aoi_coverage?: SarAoiCoverage[];
+
   // Cloudflare Radar (slow tier)
   bgp_anomalies?: BgpAnomaly[];
   cf_anomalies?: CfAnomaly[];
@@ -1022,6 +1147,11 @@ export interface ActiveLayers {
   shodan_overlay: boolean;
   viirs_nightlights: boolean;
   correlations: boolean;
+  // Upstream-added OSINT layers
+  uap_sightings: boolean;
+  wastewater: boolean;
+  crowdthreat: boolean;
+  sar: boolean;
 }
 
 export interface SelectedEntity {

@@ -2,7 +2,7 @@
 // Extracted from MaplibreViewer to reduce component size and enable unit testing.
 // Each function takes data arrays + optional helpers and returns a GeoJSON FeatureCollection or null.
 
-import type { Earthquake, GPSJammingZone, FireHotspot, InternetOutage, DataCenter, PowerPlant, VIIRSChangeNode, MilitaryBase, MilBaseBranch, DashboardData, GDELTIncident, LiveUAmapIncident, CCTVCamera, KiwiSDR, PSKSpot, SatNOGSStation, TinyGSSatellite, Scanner, FrontlineGeoJSON, UAV, Flight, Satellite, Ship, Train, ActiveLayers, SelectedEntity, UkraineAlert, WeatherAlert, AirQualityStation, Volcano, FishingEvent, SigintSignal, CorrelationAlert } from "@/types/dashboard";
+import type { Earthquake, GPSJammingZone, FireHotspot, InternetOutage, DataCenter, PowerPlant, VIIRSChangeNode, MilitaryBase, MilBaseBranch, DashboardData, GDELTIncident, LiveUAmapIncident, CCTVCamera, KiwiSDR, PSKSpot, SatNOGSStation, TinyGSSatellite, Scanner, FrontlineGeoJSON, UAV, Flight, Satellite, Ship, Train, ActiveLayers, SelectedEntity, UkraineAlert, WeatherAlert, AirQualityStation, Volcano, FishingEvent, SigintSignal, CorrelationAlert, WastewaterPlant, CrowdThreatItem, UAPSighting, SarAnomaly, SarAoi } from "@/types/dashboard";
 import { classifyAircraft } from "@/utils/aircraftClassification";
 import { MISSION_COLORS, MISSION_ICON_MAP } from "@/components/map/icons/SatelliteIcons";
 import { weatherIconId } from "@/components/map/icons/AircraftIcons";
@@ -1184,4 +1184,274 @@ export function buildISSFootprintGeoJSON(
         type: 'FeatureCollection' as const,
         features: [geoCircle(lng, lat, footprintKm)],
     };
+}
+
+// ─── UAP Sightings (upstream-added) ─────────────────────────────────────────
+
+const UAP_SHAPE_COLORS: Record<string, string> = {
+  triangle: '#ef4444',   // Red
+  orb: '#3b82f6',        // Blue
+  light: '#facc15',      // Yellow
+  disk: '#a855f7',       // Purple
+  cigar: '#f97316',      // Orange
+  'tic-tac': '#22d3ee',  // Cyan
+  fireball: '#dc2626',   // Deep red
+  formation: '#10b981',  // Emerald
+  diamond: '#e879f9',    // Fuchsia
+  rectangle: '#6366f1',  // Indigo
+  flash: '#fbbf24',      // Amber
+  changing: '#8b5cf6',   // Violet
+  unknown: '#9ca3af',    // Grey
+};
+
+// ─── CrowdThreat (upstream-added) ───────────────────────────────────────────
+
+export function buildCrowdThreatGeoJSON(threats?: CrowdThreatItem[], inView?: InViewFilter): FC {
+  if (!threats?.length) return null;
+  return {
+    type: 'FeatureCollection' as const,
+    features: threats
+      .map((t) => {
+        if (t.lat == null || t.lng == null) return null;
+        if (inView && !inView(t.lat, t.lng)) return null;
+        return {
+          type: 'Feature' as const,
+          properties: {
+            id: `ct-${t.id}`,
+            type: 'crowdthreat',
+            title: t.title,
+            summary: t.summary || '',
+            category: t.category,
+            category_colour: t.category_colour,
+            subcategory: t.subcategory,
+            threat_type: t.threat_type,
+            address: t.address,
+            city: t.city,
+            country: t.country || '',
+            timeago: t.timeago,
+            occurred: t.occurred,
+            occurred_iso: t.occurred_iso || '',
+            verification: t.verification || '',
+            severity: t.severity || '',
+            source_url: t.source_url || '',
+            votes: t.votes || 0,
+            reporter: t.reporter || '',
+            iconId: t.icon_id,
+            name: t.title,
+          },
+          geometry: { type: 'Point' as const, coordinates: [t.lng, t.lat] },
+        };
+      })
+      .filter(Boolean) as GeoJSON.Feature[],
+  };
+}
+
+// ─── Wastewater colors by alert level (upstream-added) ──────────────────────
+const WW_COLORS = {
+  alert: '#ff3333',    // red — elevated pathogen detected
+  active: '#00e5ff',   // cyan — recent data, no alert
+  stale: '#556677',    // gray — plant exists but no recent data
+};
+
+export function buildWastewaterGeoJSON(plants?: WastewaterPlant[]): FC {
+  if (!plants?.length) return null;
+  return {
+    type: 'FeatureCollection' as const,
+    features: plants
+      .filter((p) => p.lat != null && p.lng != null)
+      .map((p, i) => {
+        const hasAlerts = p.alert_count > 0;
+        const hasData = p.pathogens && p.pathogens.length > 0;
+        const color = hasAlerts ? WW_COLORS.alert : hasData ? WW_COLORS.active : WW_COLORS.stale;
+        const icon = hasAlerts ? 'ww-alert' : hasData ? 'ww-clean' : 'ww-stale';
+        const alertPathogens = (p.pathogens || []).filter((pt) => pt.alert).map((pt) => pt.name);
+        const allPathogens = (p.pathogens || []).map((pt) => pt.name);
+        // Build a rich label: name + location + alert info
+        const loc = [p.city, p.state].filter(Boolean).join(', ');
+        const labelParts = [p.name || p.site_name || 'Treatment Plant'];
+        if (loc) labelParts.push(loc);
+        if (hasAlerts && alertPathogens.length > 0) {
+          labelParts.push(`⚠ ${alertPathogens.join(', ')}`);
+        }
+        return {
+          type: 'Feature' as const,
+          properties: {
+            id: p.id || `ww-${i}`,
+            type: 'wastewater',
+            name: p.name || p.site_name || 'Treatment Plant',
+            label: labelParts.join('\n'),
+            site_name: p.site_name,
+            city: p.city,
+            state: p.state,
+            population: p.population,
+            collection_date: p.collection_date,
+            pathogen_count: (p.pathogens || []).length,
+            alert_count: p.alert_count,
+            alert_pathogens: alertPathogens.join(', '),
+            detected_pathogens: allPathogens.join(', '),
+            // Serialize pathogen details for fallback popup rendering
+            pathogens_json: JSON.stringify(p.pathogens || []),
+            color,
+            icon,
+          },
+          geometry: {
+            type: 'Point' as const,
+            coordinates: [p.lng, p.lat],
+          },
+        };
+      }),
+  };
+}
+
+export function buildUapSightingsGeoJSON(sightings?: UAPSighting[]): FC {
+  if (!sightings?.length) return null;
+  return {
+    type: 'FeatureCollection' as const,
+    features: sightings
+      .filter((s) => s.lat != null && s.lng != null)
+      .map((s, i) => {
+        // Build a rich label with all available info
+        const location = [s.city, s.state].filter(Boolean).join(', ') || 'Unknown location';
+        const dateStr = s.date_time || 'Date unknown';
+        // Format: "City, ST — Date" for the map label
+        const label = `${location}\n${dateStr}`;
+        // Popup-friendly name with count if available
+        const countMatch = s.summary?.match(/(\d+)\s*sighting/);
+        const count = countMatch ? parseInt(countMatch[1], 10) : 1;
+        const name = count > 1
+          ? `${count} sightings — ${location}`
+          : `UAP Sighting — ${location}`;
+
+        return {
+          type: 'Feature' as const,
+          properties: {
+            id: s.id || `uap-${i}`,
+            type: 'uap_sighting',
+            shape: s.shape || 'unknown',
+            shape_raw: s.shape_raw || s.shape || 'Unknown',
+            city: s.city,
+            state: s.state,
+            country: s.country,
+            date_time: s.date_time,
+            duration: s.duration,
+            summary: s.summary,
+            source: s.source || 'NUFORC',
+            count,
+            color: UAP_SHAPE_COLORS[s.shape] || UAP_SHAPE_COLORS.unknown,
+            name,
+            label,
+          },
+          geometry: {
+            type: 'Point' as const,
+            coordinates: [s.lng, s.lat],
+          },
+        };
+      }),
+  };
+}
+
+// ─── SAR (Synthetic Aperture Radar) (upstream-added) ────────────────────────
+
+/** Colors keyed by SAR anomaly `kind`.  Matches sar_normalize._kind_to_pin_category
+ *  so the map and pin store agree on semantics. */
+const SAR_KIND_COLORS: Record<string, string> = {
+  ground_deformation: '#f97316', // orange — subsidence, landslides
+  surface_water_change: '#06b6d4', // cyan — flood/water extent
+  flood_extent: '#06b6d4',
+  vegetation_disturbance: '#22c55e', // green — deforestation, burn, blast
+  damage_assessment: '#ef4444', // red — UNOSAT / EMS damage polygons
+  coherence_change: '#a855f7', // purple — generic scatter change
+};
+
+const SAR_DEFAULT_COLOR = '#eab308';
+
+export function buildSarAnomaliesGeoJSON(anomalies?: SarAnomaly[]): FC {
+  if (!anomalies?.length) return null;
+  return {
+    type: 'FeatureCollection' as const,
+    features: anomalies
+      .filter((a) => Number.isFinite(a.lat) && Number.isFinite(a.lon))
+      .map((a) => ({
+        type: 'Feature' as const,
+        properties: {
+          id: a.anomaly_id,
+          type: 'sar_anomaly',
+          kind: a.kind,
+          name: a.title || `SAR ${a.kind}`,
+          title: a.title || '',
+          summary: a.summary || '',
+          solver: a.solver || '',
+          source_constellation: a.source_constellation || '',
+          magnitude: a.magnitude ?? 0,
+          magnitude_unit: a.magnitude_unit || '',
+          confidence: a.confidence ?? 0,
+          first_seen: a.first_seen ?? 0,
+          last_seen: a.last_seen ?? 0,
+          aoi_id: a.aoi_id || '',
+          scene_count: a.scene_count ?? 0,
+          category: a.category || 'watchlist',
+          provenance_url: a.provenance_url || '',
+          evidence_hash: a.evidence_hash || '',
+          color: SAR_KIND_COLORS[a.kind] || SAR_DEFAULT_COLOR,
+        },
+        geometry: {
+          type: 'Point' as const,
+          coordinates: [a.lon, a.lat],
+        },
+      })),
+  };
+}
+
+/** Draw AOIs as filled circles (approximated with a 64-vertex polygon).  These
+ *  mark the operator's watchboxes — visible even before any anomalies arrive. */
+export function buildSarAoisGeoJSON(aois?: SarAoi[]): FC {
+  if (!aois?.length) return null;
+  const features: GeoJSON.Feature[] = [];
+  for (const aoi of aois) {
+    if (!Array.isArray(aoi.center) || aoi.center.length < 2) continue;
+    const [lat, lon] = aoi.center;
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+
+    // Use explicit polygon if provided, else build a 64-point circle.
+    let ring: number[][];
+    if (Array.isArray(aoi.polygon) && aoi.polygon.length >= 3) {
+      ring = aoi.polygon.map((pt) => [pt[1], pt[0]]); // [lat,lon] → [lon,lat]
+      // Ensure ring is closed
+      const first = ring[0];
+      const last = ring[ring.length - 1];
+      if (first[0] !== last[0] || first[1] !== last[1]) ring.push([...first]);
+    } else {
+      const radiusKm = Math.max(1, aoi.radius_km || 25);
+      const steps = 64;
+      ring = [];
+      const kmPerDegLat = 111.32;
+      const kmPerDegLon = 111.32 * Math.cos((lat * Math.PI) / 180);
+      for (let i = 0; i <= steps; i++) {
+        const theta = (i / steps) * 2 * Math.PI;
+        const dLat = (radiusKm * Math.sin(theta)) / kmPerDegLat;
+        const dLon = (radiusKm * Math.cos(theta)) / Math.max(0.0001, kmPerDegLon);
+        ring.push([lon + dLon, lat + dLat]);
+      }
+    }
+
+    features.push({
+      type: 'Feature' as const,
+      properties: {
+        id: aoi.id,
+        type: 'sar_aoi',
+        name: aoi.name || aoi.id,
+        description: aoi.description || '',
+        category: aoi.category || 'watchlist',
+        radius_km: aoi.radius_km || 0,
+        center_lat: lat,
+        center_lon: lon,
+      },
+      geometry: {
+        type: 'Polygon' as const,
+        coordinates: [ring],
+      },
+    });
+  }
+  if (features.length === 0) return null;
+  return { type: 'FeatureCollection' as const, features };
 }

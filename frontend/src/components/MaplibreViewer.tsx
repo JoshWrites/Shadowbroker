@@ -67,6 +67,8 @@ import {
     buildWeatherAlertsGeoJSON, buildWeatherAlertLabelsGeoJSON,
     buildAirQualityGeoJSON, buildVolcanoesGeoJSON, buildFishingActivityGeoJSON,
     buildVIIRSChangeNodesGeoJSON, buildCorrelationsGeoJSON,
+    buildWastewaterGeoJSON, buildCrowdThreatGeoJSON, buildUapSightingsGeoJSON,
+    buildSarAnomaliesGeoJSON, buildSarAoisGeoJSON,
     BRANCH_COLORS,
     type FlightLayerConfig,
 } from "@/components/map/geoJSONBuilders";
@@ -317,6 +319,23 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
     const correlationsGeoJSON = useMemo(() =>
         activeLayers.correlations ? buildCorrelationsGeoJSON(data?.correlations) : null,
         [activeLayers.correlations, data?.correlations]);
+
+    // Upstream-added OSINT layers
+    const wastewaterGeoJSON = useMemo(() =>
+        activeLayers.wastewater ? buildWastewaterGeoJSON(data?.wastewater) : null,
+        [activeLayers.wastewater, data?.wastewater]);
+    const crowdthreatGeoJSON = useMemo(() =>
+        activeLayers.crowdthreat ? buildCrowdThreatGeoJSON(data?.crowdthreat) : null,
+        [activeLayers.crowdthreat, data?.crowdthreat]);
+    const uapSightingsGeoJSON = useMemo(() =>
+        activeLayers.uap_sightings ? buildUapSightingsGeoJSON(data?.uap_sightings) : null,
+        [activeLayers.uap_sightings, data?.uap_sightings]);
+    const sarAnomaliesGeoJSON = useMemo(() =>
+        activeLayers.sar ? buildSarAnomaliesGeoJSON(data?.sar_anomalies) : null,
+        [activeLayers.sar, data?.sar_anomalies]);
+    const sarAoisGeoJSON = useMemo(() =>
+        activeLayers.sar ? buildSarAoisGeoJSON(data?.sar_aois) : null,
+        [activeLayers.sar, data?.sar_aois]);
 
     // --- Military base polygon LOD: show outlines when base ≥ 50px on screen ---
     const PX_THRESHOLD = 50;
@@ -1100,6 +1119,11 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
         volcanoesGeoJSON && 'volcanoes-layer',
         fishingGeoJSON && 'fishing-layer',
         viirsChangeNodesGeoJSON && 'viirs-change-nodes-layer',
+        wastewaterGeoJSON && 'wastewater-layer',
+        crowdthreatGeoJSON && 'crowdthreat-layer',
+        uapSightingsGeoJSON && 'uap-sightings-layer',
+        sarAnomaliesGeoJSON && 'sar-anomalies-layer',
+        sarAoisGeoJSON && 'sar-aois-fill',
     ].filter(Boolean) as string[];
 
 
@@ -1125,6 +1149,12 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
     useImperativeSource(mapForHook, 'fishing-source', fishingGeoJSON, 100);
     useImperativeSource(mapForHook, 'meshtastic-source', meshtasticGeoJSON, 60);
     useImperativeSource(mapForHook, 'aprs-source', aprsGeoJSON, 60);
+    // Upstream-added OSINT layers
+    useImperativeSource(mapForHook, 'wastewater-source', wastewaterGeoJSON, 100);
+    useImperativeSource(mapForHook, 'crowdthreat-source', crowdthreatGeoJSON, 100);
+    useImperativeSource(mapForHook, 'uap-sightings-source', uapSightingsGeoJSON, 100);
+    useImperativeSource(mapForHook, 'sar-anomalies-source', sarAnomaliesGeoJSON, 100);
+    useImperativeSource(mapForHook, 'sar-aois-source', sarAoisGeoJSON, 100);
 
     const handleMouseMove = useCallback((evt: any) => {
         if (onMouseCoords) onMouseCoords({ lat: evt.lngLat.lat, lng: evt.lngLat.lng });
@@ -2638,6 +2668,90 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                     </Source>
                 )}
 
+                {/* Wastewater pathogen surveillance — color by alert level */}
+                {wastewaterGeoJSON && (
+                    <Source id="wastewater-source" type="geojson" data={EMPTY_FC}>
+                        <Layer
+                            id="wastewater-layer"
+                            type="circle"
+                            paint={{
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 4, 6, 7, 10, 10],
+                                'circle-color': ['get', 'color'],
+                                'circle-opacity': 0.85,
+                                'circle-stroke-width': 1.5,
+                                'circle-stroke-color': 'rgba(255,255,255,0.4)',
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* CrowdThreat — crowdsourced threat intelligence */}
+                {crowdthreatGeoJSON && (
+                    <Source id="crowdthreat-source" type="geojson" data={EMPTY_FC}>
+                        <Layer
+                            id="crowdthreat-layer"
+                            type="circle"
+                            paint={{
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 3, 6, 6, 10, 9],
+                                'circle-color': ['coalesce', ['get', 'category_colour'], '#f59e0b'],
+                                'circle-opacity': 0.85,
+                                'circle-stroke-width': 1,
+                                'circle-stroke-color': 'rgba(255,255,255,0.5)',
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* UAP Sightings — color by reported shape */}
+                {uapSightingsGeoJSON && (
+                    <Source id="uap-sightings-source" type="geojson" data={EMPTY_FC}>
+                        <Layer
+                            id="uap-sightings-layer"
+                            type="circle"
+                            paint={{
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 3, 6, 6, 10, 9],
+                                'circle-color': ['get', 'color'],
+                                'circle-opacity': 0.85,
+                                'circle-stroke-width': 1,
+                                'circle-stroke-color': 'rgba(255,255,255,0.5)',
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* SAR (Synthetic Aperture Radar) — AOI watchboxes (polygons) */}
+                {sarAoisGeoJSON && (
+                    <Source id="sar-aois-source" type="geojson" data={EMPTY_FC}>
+                        <Layer
+                            id="sar-aois-fill"
+                            type="fill"
+                            paint={{ 'fill-color': '#eab308', 'fill-opacity': 0.08 }}
+                        />
+                        <Layer
+                            id="sar-aois-outline"
+                            type="line"
+                            paint={{ 'line-color': '#eab308', 'line-width': 1.5, 'line-opacity': 0.6, 'line-dasharray': [3, 2] }}
+                        />
+                    </Source>
+                )}
+
+                {/* SAR anomalies — color by anomaly kind */}
+                {sarAnomaliesGeoJSON && (
+                    <Source id="sar-anomalies-source" type="geojson" data={EMPTY_FC}>
+                        <Layer
+                            id="sar-anomalies-layer"
+                            type="circle"
+                            paint={{
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 4, 6, 7, 10, 11],
+                                'circle-color': ['get', 'color'],
+                                'circle-opacity': 0.85,
+                                'circle-stroke-width': 1.5,
+                                'circle-stroke-color': 'rgba(255,255,255,0.5)',
+                            }}
+                        />
+                    </Source>
+                )}
+
                 {/* ═══ END NEW UPSTREAM LAYERS ═══ */}
 
                 {/* Military Base polygon outlines (LOD — visible when zoomed in) */}
@@ -3335,6 +3449,186 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                 })()}
 
                 {/* Data Center click popup */}
+                {/* Wastewater pathogen surveillance popup */}
+                {selectedEntity?.type === 'wastewater' && selectedEntity.extra && (() => {
+                    const p: any = selectedEntity.extra;
+                    let pathogens: any[] = [];
+                    try { pathogens = JSON.parse(p.pathogens_json || '[]'); } catch { pathogens = []; }
+                    return (
+                        <Popup
+                            longitude={p._clickLng}
+                            latitude={p._clickLat}
+                            closeButton={false}
+                            closeOnClick={false}
+                            onClose={() => onEntityClick?.(null)}
+                            className="threat-popup"
+                            maxWidth="300px"
+                        >
+                            <div className="map-popup bg-[#0a1822] border border-cyan-500/40 text-[#cfe9f5] min-w-[210px]">
+                                <div className="map-popup-title text-[#00e5ff] border-b border-cyan-500/20 pb-1">
+                                    {p.name}
+                                </div>
+                                {(p.city || p.state) && (
+                                    <div className="map-popup-row">Location: <span className="text-white">{[p.city, p.state].filter(Boolean).join(', ')}</span></div>
+                                )}
+                                {p.population != null && p.population !== '' && (
+                                    <div className="map-popup-row">Population served: <span className="text-white">{Number(p.population).toLocaleString()}</span></div>
+                                )}
+                                {p.collection_date && (
+                                    <div className="map-popup-row">Collected: <span className="text-white">{p.collection_date}</span></div>
+                                )}
+                                {Number(p.alert_count) > 0 && p.alert_pathogens && (
+                                    <div className="mt-1.5 px-2 py-1 bg-red-500/15 border border-red-400/40 rounded text-[10px] text-[#ff6b6b]">
+                                        ALERT — {p.alert_pathogens}
+                                    </div>
+                                )}
+                                {pathogens.length > 0 && (
+                                    <div className="mt-1.5 space-y-0.5">
+                                        {pathogens.map((pt: any, i: number) => (
+                                            <div key={i} className="map-popup-row flex justify-between gap-2">
+                                                <span className={pt.alert ? 'text-[#ff6b6b]' : 'text-[#8fd3e8]'}>{pt.name}</span>
+                                                <span className="text-white">{pt.activity}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                                <div className="mt-1.5 text-[9px] text-cyan-600 tracking-wider">WASTEWATER SURVEILLANCE</div>
+                            </div>
+                        </Popup>
+                    );
+                })()}
+
+                {/* CrowdThreat popup */}
+                {selectedEntity?.type === 'crowdthreat' && selectedEntity.extra && (() => {
+                    const t: any = selectedEntity.extra;
+                    return (
+                        <Popup
+                            longitude={t._clickLng}
+                            latitude={t._clickLat}
+                            closeButton={false}
+                            closeOnClick={false}
+                            onClose={() => onEntityClick?.(null)}
+                            className="threat-popup"
+                            maxWidth="300px"
+                        >
+                            <div className="map-popup bg-[#1a0f0a] border border-amber-500/40 text-[#f5e6cf] min-w-[210px]">
+                                <div className="map-popup-title text-amber-400 border-b border-amber-500/20 pb-1">
+                                    {t.title}
+                                </div>
+                                {t.summary && <div className="map-popup-row text-[#e8d3a8]">{t.summary}</div>}
+                                {(t.category || t.subcategory) && (
+                                    <div className="map-popup-row">Type: <span className="text-white">{[t.category, t.subcategory].filter(Boolean).join(' / ')}</span></div>
+                                )}
+                                {(t.address || t.city) && (
+                                    <div className="map-popup-row">Location: <span className="text-white">{[t.address, t.city, t.country].filter(Boolean).join(', ')}</span></div>
+                                )}
+                                {t.timeago && <div className="map-popup-row">When: <span className="text-white">{t.timeago}</span></div>}
+                                {t.verification && <div className="map-popup-row">Verification: <span className="text-white">{t.verification}</span></div>}
+                                {t.source_url && (
+                                    <a href={t.source_url} target="_blank" rel="noopener noreferrer" className="mt-1 inline-block text-[10px] text-amber-300 underline">Source</a>
+                                )}
+                                <div className="mt-1.5 text-[9px] text-amber-600 tracking-wider">CROWDTHREAT</div>
+                            </div>
+                        </Popup>
+                    );
+                })()}
+
+                {/* UAP sighting popup */}
+                {selectedEntity?.type === 'uap_sighting' && selectedEntity.extra && (() => {
+                    const s: any = selectedEntity.extra;
+                    return (
+                        <Popup
+                            longitude={s._clickLng}
+                            latitude={s._clickLat}
+                            closeButton={false}
+                            closeOnClick={false}
+                            onClose={() => onEntityClick?.(null)}
+                            className="threat-popup"
+                            maxWidth="300px"
+                        >
+                            <div className="map-popup bg-[#0f0a1a] border border-violet-400/40 text-[#e9d5ff] min-w-[210px]">
+                                <div className="map-popup-title text-violet-300 border-b border-violet-400/20 pb-1">
+                                    {s.name}
+                                </div>
+                                {s.shape_raw && <div className="map-popup-row">Shape: <span className="text-white">{s.shape_raw}</span></div>}
+                                {(s.city || s.state || s.country) && (
+                                    <div className="map-popup-row">Location: <span className="text-white">{[s.city, s.state, s.country].filter(Boolean).join(', ')}</span></div>
+                                )}
+                                {s.date_time && <div className="map-popup-row">When: <span className="text-white">{s.date_time}</span></div>}
+                                {s.duration && <div className="map-popup-row">Duration: <span className="text-white">{s.duration}</span></div>}
+                                {s.summary && <div className="map-popup-row text-[#c4b5fd] mt-1">{s.summary}</div>}
+                                <div className="mt-1.5 text-[9px] text-violet-600 tracking-wider">{s.source || 'NUFORC'} · UAP SIGHTING</div>
+                            </div>
+                        </Popup>
+                    );
+                })()}
+
+                {/* SAR anomaly popup */}
+                {selectedEntity?.type === 'sar_anomaly' && selectedEntity.extra && (() => {
+                    const a: any = selectedEntity.extra;
+                    return (
+                        <Popup
+                            longitude={a._clickLng}
+                            latitude={a._clickLat}
+                            closeButton={false}
+                            closeOnClick={false}
+                            onClose={() => onEntityClick?.(null)}
+                            className="threat-popup"
+                            maxWidth="320px"
+                        >
+                            <div className="map-popup bg-[#1a1505] border border-yellow-500/40 text-[#f5edcf] min-w-[220px]">
+                                <div className="map-popup-title text-yellow-300 border-b border-yellow-500/20 pb-1">
+                                    {a.name}
+                                </div>
+                                {a.kind && <div className="map-popup-row">Kind: <span className="text-white">{String(a.kind).replace(/_/g, ' ')}</span></div>}
+                                {a.summary && <div className="map-popup-row text-[#e8dca8] mt-1">{a.summary}</div>}
+                                {(a.magnitude != null && a.magnitude !== 0) && (
+                                    <div className="map-popup-row">Magnitude: <span className="text-white">{a.magnitude}{a.magnitude_unit ? ` ${a.magnitude_unit}` : ''}</span></div>
+                                )}
+                                {(a.confidence != null && a.confidence !== 0) && (
+                                    <div className="map-popup-row">Confidence: <span className="text-white">{Math.round(Number(a.confidence) * 100)}%</span></div>
+                                )}
+                                {a.source_constellation && <div className="map-popup-row">Source: <span className="text-white">{a.source_constellation}</span></div>}
+                                {a.scene_count != null && Number(a.scene_count) > 0 && (
+                                    <div className="map-popup-row">Scenes: <span className="text-white">{a.scene_count}</span></div>
+                                )}
+                                {a.provenance_url && (
+                                    <a href={a.provenance_url} target="_blank" rel="noopener noreferrer" className="mt-1 inline-block text-[10px] text-yellow-300 underline">Provenance</a>
+                                )}
+                                <div className="mt-1.5 text-[9px] text-yellow-600 tracking-wider">SAR ANOMALY</div>
+                            </div>
+                        </Popup>
+                    );
+                })()}
+
+                {/* SAR AOI watchbox popup */}
+                {selectedEntity?.type === 'sar_aoi' && selectedEntity.extra && (() => {
+                    const a: any = selectedEntity.extra;
+                    return (
+                        <Popup
+                            longitude={a._clickLng}
+                            latitude={a._clickLat}
+                            closeButton={false}
+                            closeOnClick={false}
+                            onClose={() => onEntityClick?.(null)}
+                            className="threat-popup"
+                            maxWidth="300px"
+                        >
+                            <div className="map-popup bg-[#1a1505] border border-yellow-500/40 text-[#f5edcf] min-w-[200px]">
+                                <div className="map-popup-title text-yellow-300 border-b border-yellow-500/20 pb-1">
+                                    {a.name}
+                                </div>
+                                {a.description && <div className="map-popup-row text-[#e8dca8]">{a.description}</div>}
+                                {a.category && <div className="map-popup-row">Category: <span className="text-white">{a.category}</span></div>}
+                                {a.radius_km != null && Number(a.radius_km) > 0 && (
+                                    <div className="map-popup-row">Radius: <span className="text-white">{a.radius_km} km</span></div>
+                                )}
+                                <div className="mt-1.5 text-[9px] text-yellow-600 tracking-wider">SAR WATCHBOX (AOI)</div>
+                            </div>
+                        </Popup>
+                    );
+                })()}
+
                 {selectedEntity?.type === 'datacenter' && (() => {
                     const dc = data?.datacenters?.find((_: any, i: number) => `dc-${i}` === selectedEntity.id);
                     if (!dc) return null;

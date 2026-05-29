@@ -31,6 +31,7 @@ const SLOW_LAYERS = new Set([
   "power_plants", "satnogs", "tinygs", "psk_reporter", "scanners",
   "weather_alerts", "air_quality", "volcanoes", "fishing_activity",
   "correlations", "viirs_nightlights", "shodan_overlay", "sentinel_hub",
+  "uap_sightings", "wastewater", "crowdthreat", "sar",
 ]);
 
 /**

@@ -181,6 +181,11 @@ export default function Dashboard() {
     shodan_overlay: false,
     viirs_nightlights: false,
     sentinel_hub: false,
+    // New upstream OSINT layers
+    uap_sightings: false,
+    wastewater: false,
+    crowdthreat: false,
+    sar: false,
   });
 
   const { data, dataVersion, backendStatus, layerErrors } = useDataPolling(activeLayers);

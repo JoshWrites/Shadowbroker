@@ -60,6 +60,10 @@ const FRESHNESS_MAP: Record<string, string> = {
     fishing_activity: "fishing_activity",
     correlations: "correlations",
     viirs_nightlights: "viirs_change_nodes",
+    uap_sightings: "uap_sightings",
+    wastewater: "wastewater",
+    crowdthreat: "crowdthreat",
+    sar: "sar_anomalies",
 };
 
 // POTUS fleet ICAO hex codes for client-side filtering
@@ -316,6 +320,11 @@ const WorldviewLeftPanel = React.memo(function WorldviewLeftPanel({ data, active
         { id: "viirs_nightlights", name: "VIIRS Nightlights", source: "NASA VIIRS", count: data?.viirs_change_nodes?.length || 0, icon: Globe },
         { id: "sentinel_hub", name: "Sentinel Hub", source: "Copernicus CDSE", count: null, icon: Satellite },
         { id: "shodan_overlay", name: "Shodan Overlay", source: "Shodan.io", count: null, icon: Server },
+        // Additional OSINT feeds
+        { id: "wastewater", name: "Wastewater SCAN", source: "WastewaterSCAN", count: data?.wastewater?.length || 0, icon: Activity },
+        { id: "crowdthreat", name: "CrowdThreat", source: "CrowdThreat", count: data?.crowdthreat?.length || 0, icon: Shield },
+        { id: "uap_sightings", name: "UAP Sightings", source: "NUFORC", count: data?.uap_sightings?.length || 0, icon: Eye },
+        { id: "sar", name: "SAR Anomalies", source: "SAR Constellations", count: data?.sar_anomalies?.length || 0, icon: Satellite },
     ];
 
     const shipIcon = <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M2 21c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1 .6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1" /><path d="M19.38 20A11.6 11.6 0 0 0 21 14l-9-4-9 4c0 2.9.94 5.34 2.81 7.76" /><path d="M19 13V7a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v6" /></svg>;
