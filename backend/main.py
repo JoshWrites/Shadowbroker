@@ -678,6 +678,10 @@ _SLOW_LAYER_KEYS: dict[str, list[str]] = {
     "bgp_anomalies":    ["bgp_anomalies"],
     "cf_anomalies":     ["cf_anomalies"],
     "active_ddos":      ["active_ddos"],
+    "wastewater":       ["wastewater"],
+    "crowdthreat":      ["crowdthreat"],
+    "uap_sightings":    ["uap_sightings"],
+    "sar":              ["sar_scenes", "sar_anomalies", "sar_aoi_coverage"],
 }
 
 def _requested_keys(layers_csv: str | None, layer_map: dict[str, list[str]]) -> set[str] | None:
@@ -770,6 +774,12 @@ async def live_data_slow(request: Request,
     if _include("bgp_anomalies"):     payload["bgp_anomalies"] = d.get("bgp_anomalies", [])
     if _include("cf_anomalies"):      payload["cf_anomalies"] = d.get("cf_anomalies", [])
     if _include("active_ddos"):       payload["active_ddos"] = d.get("active_ddos", [])
+    if _include("wastewater"):        payload["wastewater"] = _f(d.get("wastewater", []))
+    if _include("crowdthreat"):       payload["crowdthreat"] = _f(d.get("crowdthreat", []))
+    if _include("uap_sightings"):     payload["uap_sightings"] = _f(d.get("uap_sightings", []))
+    if _include("sar_scenes"):        payload["sar_scenes"] = d.get("sar_scenes", [])
+    if _include("sar_anomalies"):     payload["sar_anomalies"] = d.get("sar_anomalies", [])
+    if _include("sar_aoi_coverage"): payload["sar_aoi_coverage"] = d.get("sar_aoi_coverage", [])
     payload["freshness"] = dict(source_timestamps)
 
     bbox_tag = f"{s},{w},{n},{e}" if has_bbox else "full"

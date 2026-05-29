@@ -88,11 +88,12 @@ from services.fetchers.aircraft_database import refresh_aircraft_database  # noq
 try:
     from services.fetchers.earth_observation import (
         fetch_volcanoes, fetch_viirs_change_nodes, fetch_weather_alerts,
-        fetch_air_quality, fetch_firms_country_fires,
+        fetch_air_quality, fetch_firms_country_fires, fetch_uap_sightings,
     )
 except ImportError:
     fetch_volcanoes = fetch_viirs_change_nodes = fetch_weather_alerts = None
     fetch_air_quality = fetch_firms_country_fires = None
+    fetch_uap_sightings = None
 
 try:
     from services.fetchers.infrastructure import (
@@ -493,6 +494,13 @@ def start_scheduler():
         lambda: _run_task_with_health(fetch_crowdthreat, "fetch_crowdthreat"),
         'cron', hour=12, minute=0, id='crowdthreat_daily', max_instances=1, misfire_grace_time=3600,
     )
+
+    # NUFORC UAP sightings — weekly full refresh (heavy geocoding pass).
+    if fetch_uap_sightings is not None:
+        _scheduler.add_job(
+            lambda: _run_task_with_health(lambda: fetch_uap_sightings(force_refresh=True), "fetch_uap_sightings"),
+            'interval', days=7, id='uap_sightings_weekly', max_instances=1, misfire_grace_time=3600,
+        )
 
     # Route database — bulk refresh from vrs-standing-data.adsb.lol every 5 days.
     _scheduler.add_job(
