@@ -12,6 +12,14 @@ services:
       - LTA_ACCOUNT_KEY=${LTA_ACCOUNT_KEY}
       # Override allowed CORS origins (comma-separated). Auto-detects LAN IPs if empty.
       - CORS_ORIGINS=${CORS_ORIGINS:-}
+      # Optional: Signal Archive listener for gap backfill on startup. Leave unset to disable.
+      - LISTENER_URL=${LISTENER_URL:-}
+      # Ukraine alerts listener (LXC 110). Falls back to LISTENER_URL if unset.
+      - UKRAINE_LISTENER_URL=${UKRAINE_LISTENER_URL:-}
+      # Ukraine alerts.in.ua bearer token — register at devs.alerts.in.ua. Leave unset to disable.
+      - UKRAINE_ALERTS_TOKEN=${UKRAINE_ALERTS_TOKEN:-}
+      # Cloudflare Radar API token — Account > Radar > Read. Leave unset to disable CF Radar layers.
+      - CLOUDFLARE_RADAR_TOKEN=${CLOUDFLARE_RADAR_TOKEN:-}
     volumes:
       - backend_data:/app/data
     restart: unless-stopped
@@ -30,6 +38,8 @@ services:
   frontend:
     build:
       context: ./frontend
+      args:
+        - NEXT_PUBLIC_OWM_API_KEY=${NEXT_PUBLIC_OWM_API_KEY:-}
     container_name: shadowbroker-frontend
     ports:
       - "3000:3000"
@@ -42,7 +52,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/"]
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/"]
       interval: 30s
       timeout: 10s
       retries: 3

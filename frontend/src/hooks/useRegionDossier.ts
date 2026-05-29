@@ -14,9 +14,15 @@ export function useRegionDossier(
     setRegionDossierLoading(true);
     setRegionDossier(null);
     try {
-      const [dossierRes, sentinelRes] = await Promise.allSettled([
+      const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${coords.lat}&longitude=${coords.lng}`
+        + `&hourly=temperature_2m,relative_humidity_2m,dew_point_2m,apparent_temperature,precipitation,rain,showers,snowfall,snow_depth,weather_code,cloud_cover,pressure_msl,wind_speed_10m,wind_direction_10m,wind_gusts_10m,visibility,uv_index`
+        + `&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max,weather_code,sunrise,sunset`
+        + `&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,cloud_cover,pressure_msl,wind_speed_10m,wind_direction_10m,wind_gusts_10m,precipitation,uv_index,is_day`
+        + `&timezone=auto&past_days=10&forecast_days=7`;
+      const [dossierRes, sentinelRes, weatherRes] = await Promise.allSettled([
         fetch(`${API_BASE}/api/region-dossier?lat=${coords.lat}&lng=${coords.lng}`),
         fetch(`${API_BASE}/api/sentinel2/search?lat=${coords.lat}&lng=${coords.lng}`),
+        fetch(weatherUrl),
       ]);
       let dossierData: Record<string, unknown> = {};
       if (dossierRes.status === 'fulfilled' && dossierRes.value.ok) {
@@ -26,7 +32,11 @@ export function useRegionDossier(
       if (sentinelRes.status === 'fulfilled' && sentinelRes.value.ok) {
         sentinelData = await sentinelRes.value.json();
       }
-      setRegionDossier({ lat: coords.lat, lng: coords.lng, ...dossierData, sentinel2: sentinelData });
+      let weatherData = null;
+      if (weatherRes.status === 'fulfilled' && weatherRes.value.ok) {
+        weatherData = await weatherRes.value.json();
+      }
+      setRegionDossier({ lat: coords.lat, lng: coords.lng, ...dossierData, sentinel2: sentinelData, weather: weatherData });
     } catch (e) {
       console.error("Failed to fetch region dossier", e);
     } finally {

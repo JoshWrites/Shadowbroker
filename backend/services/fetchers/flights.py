@@ -1,5 +1,7 @@
 """Commercial flight fetching — ADS-B, OpenSky, supplemental sources, routes,
 trail accumulation, GPS jamming detection, and holding pattern detection."""
+
+import copy
 import re
 import os
 import time
@@ -8,19 +10,107 @@ import json
 import logging
 import threading
 import concurrent.futures
+import random
 import requests
 from datetime import datetime
-from cachetools import TTLCache
 from services.network_utils import fetch_with_curl
 from services.fetchers._store import latest_data, _data_lock, _mark_fresh
 from services.fetchers.plane_alert import enrich_with_plane_alert, enrich_with_tracked_names
+from services.fetchers.emissions import get_emissions_info
+from services.fetchers.flight_observations import record_observation as _record_flight_observation
 from services.fetchers.retry import with_retry
+from services.fetchers.route_database import lookup_route
+from services.fetchers.aircraft_database import lookup_aircraft_type
+from services.constants import GPS_JAMMING_NACP_THRESHOLD, GPS_JAMMING_MIN_RATIO, GPS_JAMMING_MIN_AIRCRAFT
 
 logger = logging.getLogger("services.data_fetcher")
 
 # Pre-compiled regex patterns for airline code extraction (used in hot loop)
-_RE_AIRLINE_CODE_1 = re.compile(r'^([A-Z]{3})\d')
-_RE_AIRLINE_CODE_2 = re.compile(r'^([A-Z]{3})[A-Z\d]')
+_RE_AIRLINE_CODE_1 = re.compile(r"^([A-Z]{3})\d")
+_RE_AIRLINE_CODE_2 = re.compile(r"^([A-Z]{3})[A-Z\d]")
+
+
+def detect_gps_jamming_zones(
+    raw_flights: list[dict],
+    *,
+    min_aircraft: int | None = None,
+    min_ratio: float | None = None,
+    nacp_threshold: int | None = None,
+) -> list[dict]:
+    """Detect GPS interference zones from a snapshot of raw ADS-B aircraft.
+
+    Methodology mirrors GPSJam.org / Flightradar24: bin aircraft into 1°x1°
+    grid cells, flag cells where the fraction of aircraft reporting degraded
+    NACp clears a threshold.
+
+    Inputs
+    ------
+    raw_flights:
+        Iterable of dicts. Each item is expected to carry ``lat``, ``lng``
+        (or ``lon``), and ``nac_p``. Records missing position OR missing
+        ``nac_p`` entirely (typical for OpenSky-sourced flights) are
+        skipped — absence-of-data isn't evidence of anything.
+
+    nac_p == 0 IS counted as degraded. Pre-fix code skipped it on the theory
+    that "0 = old transponder, never computed accuracy." That's only half
+    right: modern Mode-S Enhanced Surveillance transponders also fall back
+    to nac_p=0 when they lose GPS lock entirely — which is exactly the
+    jamming signature we're trying to detect. Filtering 0 out was discarding
+    the strongest evidence.
+
+    Denoising:
+        1. Require ``min_aircraft`` per grid cell for statistical validity.
+        2. Subtract 1 from degraded count per cell (GPSJam's technique) so
+           a single quirky transponder can't flag an entire zone.
+        3. Require ratio ``adjusted_degraded / total > min_ratio``.
+
+    All thresholds default to the module-level constants but can be
+    overridden for testing.
+    """
+    min_aircraft = GPS_JAMMING_MIN_AIRCRAFT if min_aircraft is None else int(min_aircraft)
+    min_ratio = GPS_JAMMING_MIN_RATIO if min_ratio is None else float(min_ratio)
+    nacp_threshold = (
+        GPS_JAMMING_NACP_THRESHOLD if nacp_threshold is None else int(nacp_threshold)
+    )
+
+    jamming_grid: dict[str, dict[str, int]] = {}
+    for rf in raw_flights or []:
+        rlat = rf.get("lat")
+        rlng = rf.get("lng") if rf.get("lng") is not None else rf.get("lon")
+        if rlat is None or rlng is None:
+            continue
+        nacp = rf.get("nac_p")
+        if nacp is None:
+            continue
+        grid_key = f"{int(rlat)},{int(rlng)}"
+        cell = jamming_grid.setdefault(grid_key, {"degraded": 0, "total": 0})
+        cell["total"] += 1
+        if nacp < nacp_threshold:
+            cell["degraded"] += 1
+
+    jamming_zones: list[dict] = []
+    for gk, counts in jamming_grid.items():
+        if counts["total"] < min_aircraft:
+            continue
+        adjusted_degraded = max(counts["degraded"] - 1, 0)
+        if adjusted_degraded == 0:
+            continue
+        ratio = adjusted_degraded / counts["total"]
+        if ratio > min_ratio:
+            lat_i, lng_i = gk.split(",")
+            severity = "low" if ratio < 0.5 else "medium" if ratio < 0.75 else "high"
+            jamming_zones.append(
+                {
+                    "lat": int(lat_i) + 0.5,
+                    "lng": int(lng_i) + 0.5,
+                    "severity": severity,
+                    "ratio": round(ratio, 2),
+                    "degraded": counts["degraded"],
+                    "total": counts["total"],
+                }
+            )
+    return jamming_zones
+
 
 # ---------------------------------------------------------------------------
 # OpenSky Network API Client (OAuth2)
@@ -39,7 +129,7 @@ class OpenSkyClient:
         data = {
             "grant_type": "client_credentials",
             "client_id": self.client_id,
-            "client_secret": self.client_secret
+            "client_secret": self.client_secret,
         }
         try:
             r = requests.post(url, data=data, timeout=10)
@@ -51,74 +141,221 @@ class OpenSkyClient:
                 return self.token
             else:
                 logger.error(f"OpenSky Auth Failed: {r.status_code} {r.text}")
-        except (requests.RequestException, ConnectionError, TimeoutError, ValueError, KeyError) as e:
+        except (
+            requests.RequestException,
+            ConnectionError,
+            TimeoutError,
+            ValueError,
+            KeyError,
+        ) as e:
             logger.error(f"OpenSky Auth Exception: {e}")
         return None
 
+
 opensky_client = OpenSkyClient(
     client_id=os.environ.get("OPENSKY_CLIENT_ID", ""),
-    client_secret=os.environ.get("OPENSKY_CLIENT_SECRET", "")
+    client_secret=os.environ.get("OPENSKY_CLIENT_SECRET", ""),
 )
 
 # Throttling and caching for OpenSky (400 req/day limit)
 last_opensky_fetch = 0
 cached_opensky_flights = []
+_opensky_cache_lock = threading.Lock()
 
 # ---------------------------------------------------------------------------
 # Supplemental ADS-B sources for blind-spot gap-filling
 # ---------------------------------------------------------------------------
 _BLIND_SPOT_REGIONS = [
-    {"name": "Yekaterinburg",  "lat": 56.8, "lon": 60.6,  "radius_nm": 250},
-    {"name": "Novosibirsk",   "lat": 55.0, "lon": 82.9,  "radius_nm": 250},
-    {"name": "Krasnoyarsk",   "lat": 56.0, "lon": 92.9,  "radius_nm": 250},
-    {"name": "Vladivostok",   "lat": 43.1, "lon": 131.9, "radius_nm": 250},
-    {"name": "Urumqi",        "lat": 43.8, "lon": 87.6,  "radius_nm": 250},
-    {"name": "Chengdu",       "lat": 30.6, "lon": 104.1, "radius_nm": 250},
-    {"name": "Lagos-Accra",   "lat": 6.5,  "lon": 3.4,   "radius_nm": 250},
-    {"name": "Addis Ababa",   "lat": 9.0,  "lon": 38.7,  "radius_nm": 250},
+    {"name": "Yekaterinburg", "lat": 56.8, "lon": 60.6, "radius_nm": 250},
+    {"name": "Novosibirsk", "lat": 55.0, "lon": 82.9, "radius_nm": 250},
+    {"name": "Krasnoyarsk", "lat": 56.0, "lon": 92.9, "radius_nm": 250},
+    {"name": "Vladivostok", "lat": 43.1, "lon": 131.9, "radius_nm": 250},
+    {"name": "Urumqi", "lat": 43.8, "lon": 87.6, "radius_nm": 250},
+    {"name": "Chengdu", "lat": 30.6, "lon": 104.1, "radius_nm": 250},
+    {"name": "Lagos-Accra", "lat": 6.5, "lon": 3.4, "radius_nm": 250},
+    {"name": "Addis Ababa", "lat": 9.0, "lon": 38.7, "radius_nm": 250},
 ]
-_SUPPLEMENTAL_FETCH_INTERVAL = 120
+# The blind-spot supplement previously burst several airplanes.live point
+# queries in parallel and triggered repeated 429s in real startup logs, so we
+# keep it on a long cache interval and pace each regional point query serially.
+_SUPPLEMENTAL_FETCH_INTERVAL = 1800
+_AIRPLANES_LIVE_DELAY_SECONDS = 1.2
+_AIRPLANES_LIVE_DELAY_JITTER_SECONDS = 0.4
 last_supplemental_fetch = 0
 cached_supplemental_flights = []
+_supplemental_cache_lock = threading.Lock()
 
 # Helicopter type codes (backend classification)
 _HELI_TYPES_BACKEND = {
-    "R22", "R44", "R66", "B06", "B06T", "B204", "B205", "B206", "B212", "B222", "B230",
-    "B407", "B412", "B427", "B429", "B430", "B505", "B525",
-    "AS32", "AS35", "AS50", "AS55", "AS65",
-    "EC20", "EC25", "EC30", "EC35", "EC45", "EC55", "EC75",
-    "H125", "H130", "H135", "H145", "H155", "H160", "H175", "H215", "H225",
-    "S55", "S58", "S61", "S64", "S70", "S76", "S92",
-    "A109", "A119", "A139", "A169", "A189", "AW09",
-    "MD52", "MD60", "MDHI", "MD90", "NOTR",
-    "B47G", "HUEY", "GAMA", "CABR", "EXE",
+    "R22",
+    "R44",
+    "R66",
+    "B06",
+    "B06T",
+    "B204",
+    "B205",
+    "B206",
+    "B212",
+    "B222",
+    "B230",
+    "B407",
+    "B412",
+    "B427",
+    "B429",
+    "B430",
+    "B505",
+    "B525",
+    "AS32",
+    "AS35",
+    "AS50",
+    "AS55",
+    "AS65",
+    "EC20",
+    "EC25",
+    "EC30",
+    "EC35",
+    "EC45",
+    "EC55",
+    "EC75",
+    "H125",
+    "H130",
+    "H135",
+    "H145",
+    "H155",
+    "H160",
+    "H175",
+    "H215",
+    "H225",
+    "S55",
+    "S58",
+    "S61",
+    "S64",
+    "S70",
+    "S76",
+    "S92",
+    "A109",
+    "A119",
+    "A139",
+    "A169",
+    "A189",
+    "AW09",
+    "MD52",
+    "MD60",
+    "MDHI",
+    "MD90",
+    "NOTR",
+    "B47G",
+    "HUEY",
+    "GAMA",
+    "CABR",
+    "EXE",
 }
 
 # Private jet ICAO type designator codes
 PRIVATE_JET_TYPES = {
-    "G150", "G200", "G280", "GLEX", "G500", "G550", "G600", "G650", "G700",
-    "GLF2", "GLF3", "GLF4", "GLF5", "GLF6", "GL5T", "GL7T", "GV", "GIV",
-    "CL30", "CL35", "CL60", "BD70", "BD10", "GL5T", "GL7T",
-    "CRJ1", "CRJ2",
-    "C25A", "C25B", "C25C", "C500", "C501", "C510", "C525", "C526",
-    "C550", "C560", "C56X", "C680", "C68A", "C700", "C750",
-    "FA10", "FA20", "FA50", "FA7X", "FA8X", "F900", "F2TH", "ASTR",
-    "E35L", "E545", "E550", "E55P", "LEGA", "PH10", "PH30",
-    "LJ23", "LJ24", "LJ25", "LJ28", "LJ31", "LJ35", "LJ36",
-    "LJ40", "LJ45", "LJ55", "LJ60", "LJ70", "LJ75",
-    "H25A", "H25B", "H25C", "HA4T", "BE40", "PRM1",
-    "HDJT", "PC24", "EA50", "SF50", "GALX",
+    "G150",
+    "G200",
+    "G280",
+    "GLEX",
+    "G500",
+    "G550",
+    "G600",
+    "G650",
+    "G700",
+    "GLF2",
+    "GLF3",
+    "GLF4",
+    "GLF5",
+    "GLF6",
+    "GL5T",
+    "GL7T",
+    "GV",
+    "GIV",
+    "CL30",
+    "CL35",
+    "CL60",
+    "BD70",
+    "BD10",
+    "GL5T",
+    "GL7T",
+    "CRJ1",
+    "CRJ2",
+    "C25A",
+    "C25B",
+    "C25C",
+    "C500",
+    "C501",
+    "C510",
+    "C525",
+    "C526",
+    "C550",
+    "C560",
+    "C56X",
+    "C680",
+    "C68A",
+    "C700",
+    "C750",
+    "FA10",
+    "FA20",
+    "FA50",
+    "FA7X",
+    "FA8X",
+    "F900",
+    "F2TH",
+    "ASTR",
+    "E35L",
+    "E545",
+    "E550",
+    "E55P",
+    "LEGA",
+    "PH10",
+    "PH30",
+    "LJ23",
+    "LJ24",
+    "LJ25",
+    "LJ28",
+    "LJ31",
+    "LJ35",
+    "LJ36",
+    "LJ40",
+    "LJ45",
+    "LJ55",
+    "LJ60",
+    "LJ70",
+    "LJ75",
+    "H25A",
+    "H25B",
+    "H25C",
+    "HA4T",
+    "BE40",
+    "PRM1",
+    "HDJT",
+    "PC24",
+    "EA50",
+    "SF50",
+    "GALX",
 }
 
 # Flight trails state
 flight_trails = {}  # {icao_hex: {points: [[lat, lng, alt, ts], ...], last_seen: ts}}
 _trails_lock = threading.Lock()
-_MAX_TRACKED_TRAILS = 2000
+_MAX_TRACKED_TRAILS = 20000
 
-# Routes cache
-dynamic_routes_cache = TTLCache(maxsize=5000, ttl=7200)
-routes_fetch_in_progress = False
-_routes_lock = threading.Lock()
+
+def get_flight_trail(icao24: str) -> list:
+    """Return the accumulated trail for a single aircraft without expanding live payloads."""
+    hex_id = str(icao24 or "").strip().lower()
+    if not hex_id:
+        return []
+    with _trails_lock:
+        points = flight_trails.get(hex_id, {}).get("points", [])
+        return [list(point) for point in points]
+
+# Route enrichment is now served from services.fetchers.route_database, which
+# bulk-loads vrs-standing-data.adsb.lol/routes.csv.gz once per day and looks up
+# callsigns from an in-memory index. Replaces the legacy /api/0/routeset POST,
+# which was both blocked under the ShadowBroker UA (HTTP 451) and broken
+# upstream (returning 201 with empty body even for unblocked clients).
 
 
 def _fetch_supplemental_sources(seen_hex: set) -> list:
@@ -126,36 +363,61 @@ def _fetch_supplemental_sources(seen_hex: set) -> list:
     global last_supplemental_fetch, cached_supplemental_flights
 
     now = time.time()
-    if now - last_supplemental_fetch < _SUPPLEMENTAL_FETCH_INTERVAL:
-        return [f for f in cached_supplemental_flights
-                if f.get("hex", "").lower().strip() not in seen_hex]
+    with _supplemental_cache_lock:
+        if now - last_supplemental_fetch < _SUPPLEMENTAL_FETCH_INTERVAL:
+            return [
+                f
+                for f in cached_supplemental_flights
+                if f.get("hex", "").lower().strip() not in seen_hex
+            ]
 
     new_supplemental = []
     supplemental_hex = set()
 
     def _fetch_airplaneslive(region):
         try:
-            url = (f"https://api.airplanes.live/v2/point/"
-                   f"{region['lat']}/{region['lon']}/{region['radius_nm']}")
+            url = (
+                f"https://api.airplanes.live/v2/point/"
+                f"{region['lat']}/{region['lon']}/{region['radius_nm']}"
+            )
             res = fetch_with_curl(url, timeout=10)
             if res.status_code == 200:
                 data = res.json()
                 return data.get("ac", [])
-        except (requests.RequestException, ConnectionError, TimeoutError, ValueError, KeyError, json.JSONDecodeError, OSError) as e:
+        except (
+            requests.RequestException,
+            ConnectionError,
+            TimeoutError,
+            ValueError,
+            KeyError,
+            json.JSONDecodeError,
+            OSError,
+        ) as e:
             logger.debug(f"airplanes.live {region['name']} failed: {e}")
         return []
 
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
-            results = list(pool.map(_fetch_airplaneslive, _BLIND_SPOT_REGIONS))
-        for region_flights in results:
+        for idx, region in enumerate(_BLIND_SPOT_REGIONS):
+            region_flights = _fetch_airplaneslive(region)
             for f in region_flights:
                 h = f.get("hex", "").lower().strip()
                 if h and h not in seen_hex and h not in supplemental_hex:
                     f["supplemental_source"] = "airplanes.live"
                     new_supplemental.append(f)
                     supplemental_hex.add(h)
-    except (requests.RequestException, ConnectionError, TimeoutError, ValueError, KeyError, OSError) as e:
+            if idx < len(_BLIND_SPOT_REGIONS) - 1:
+                time.sleep(
+                    _AIRPLANES_LIVE_DELAY_SECONDS
+                    + random.uniform(0.0, _AIRPLANES_LIVE_DELAY_JITTER_SECONDS)
+                )
+    except (
+        requests.RequestException,
+        ConnectionError,
+        TimeoutError,
+        ValueError,
+        KeyError,
+        OSError,
+    ) as e:
         logger.warning(f"airplanes.live supplemental fetch failed: {e}")
 
     ap_count = len(new_supplemental)
@@ -163,8 +425,10 @@ def _fetch_supplemental_sources(seen_hex: set) -> list:
     try:
         for region in _BLIND_SPOT_REGIONS:
             try:
-                url = (f"https://opendata.adsb.fi/api/v3/lat/"
-                       f"{region['lat']}/lon/{region['lon']}/dist/{region['radius_nm']}")
+                url = (
+                    f"https://opendata.adsb.fi/api/v3/lat/"
+                    f"{region['lat']}/lon/{region['lon']}/dist/{region['radius_nm']}"
+                )
                 res = fetch_with_curl(url, timeout=10)
                 if res.status_code == 200:
                     data = res.json()
@@ -174,75 +438,40 @@ def _fetch_supplemental_sources(seen_hex: set) -> list:
                             f["supplemental_source"] = "adsb.fi"
                             new_supplemental.append(f)
                             supplemental_hex.add(h)
-            except (requests.RequestException, ConnectionError, TimeoutError, ValueError, KeyError, json.JSONDecodeError, OSError) as e:
+            except (
+                requests.RequestException,
+                ConnectionError,
+                TimeoutError,
+                ValueError,
+                KeyError,
+                json.JSONDecodeError,
+                OSError,
+            ) as e:
                 logger.debug(f"adsb.fi {region['name']} failed: {e}")
             time.sleep(1.1)
-    except (requests.RequestException, ConnectionError, TimeoutError, ValueError, KeyError, OSError) as e:
+    except (
+        requests.RequestException,
+        ConnectionError,
+        TimeoutError,
+        ValueError,
+        KeyError,
+        OSError,
+    ) as e:
         logger.warning(f"adsb.fi supplemental fetch failed: {e}")
 
     fi_count = len(new_supplemental) - ap_count
 
-    cached_supplemental_flights = new_supplemental
-    last_supplemental_fetch = now
+    with _supplemental_cache_lock:
+        cached_supplemental_flights = new_supplemental
+        last_supplemental_fetch = now
     if new_supplemental:
         _mark_fresh("supplemental_flights")
 
-    logger.info(f"Supplemental: +{len(new_supplemental)} new aircraft from blind-spot "
-                f"hotspots (airplanes.live: {ap_count}, adsb.fi: {fi_count})")
+    logger.info(
+        f"Supplemental: +{len(new_supplemental)} new aircraft from blind-spot "
+        f"hotspots (airplanes.live: {ap_count}, adsb.fi: {fi_count})"
+    )
     return new_supplemental
-
-
-def fetch_routes_background(sampled):
-    global routes_fetch_in_progress
-    with _routes_lock:
-        if routes_fetch_in_progress:
-            return
-        routes_fetch_in_progress = True
-
-    try:
-        callsigns_to_query = []
-        for f in sampled:
-            c_sign = str(f.get("flight", "")).strip()
-            if c_sign and c_sign != "UNKNOWN":
-                callsigns_to_query.append({
-                    "callsign": c_sign,
-                    "lat": f.get("lat", 0),
-                    "lng": f.get("lon", 0)
-                })
-
-        batch_size = 100
-        batches = [callsigns_to_query[i:i+batch_size] for i in range(0, len(callsigns_to_query), batch_size)]
-
-        for batch in batches:
-            try:
-                r = fetch_with_curl("https://api.adsb.lol/api/0/routeset", method="POST", json_data={"planes": batch}, timeout=15)
-                if r.status_code == 200:
-                    route_data = r.json()
-                    route_list = []
-                    if isinstance(route_data, dict):
-                        route_list = route_data.get("value", [])
-                    elif isinstance(route_data, list):
-                        route_list = route_data
-
-                    for route in route_list:
-                        callsign = route.get("callsign", "")
-                        airports = route.get("_airports", [])
-                        if airports and len(airports) >= 2:
-                            orig_apt = airports[0]
-                            dest_apt = airports[-1]
-                            with _routes_lock:
-                                dynamic_routes_cache[callsign] = {
-                                    "orig_name": f"{orig_apt.get('iata', '')}: {orig_apt.get('name', 'Unknown')}",
-                                    "dest_name": f"{dest_apt.get('iata', '')}: {dest_apt.get('name', 'Unknown')}",
-                                    "orig_loc": [orig_apt.get("lon", 0), orig_apt.get("lat", 0)],
-                                    "dest_loc": [dest_apt.get("lon", 0), dest_apt.get("lat", 0)],
-                                }
-                time.sleep(0.25)
-            except (requests.RequestException, ConnectionError, TimeoutError, ValueError, KeyError, json.JSONDecodeError, OSError) as e:
-                logger.debug(f"Route batch request failed: {e}")
-    finally:
-        with _routes_lock:
-            routes_fetch_in_progress = False
 
 
 def _classify_and_publish(all_adsb_flights):
@@ -255,11 +484,6 @@ def _classify_and_publish(all_adsb_flights):
 
     if not all_adsb_flights:
         return
-
-    with _routes_lock:
-        already_running = routes_fetch_in_progress
-    if not already_running:
-        threading.Thread(target=fetch_routes_background, args=(all_adsb_flights,), daemon=True).start()
 
     for f in all_adsb_flights:
         try:
@@ -279,8 +503,7 @@ def _classify_and_publish(all_adsb_flights):
             origin_name = "UNKNOWN"
             dest_name = "UNKNOWN"
 
-            with _routes_lock:
-                cached_route = dynamic_routes_cache.get(flight_str)
+            cached_route = lookup_route(flight_str)
             if cached_route:
                 origin_name = cached_route["orig_name"]
                 dest_name = cached_route["dest_name"]
@@ -302,33 +525,59 @@ def _classify_and_publish(all_adsb_flights):
             gs_knots = f.get("gs")
             speed_knots = round(gs_knots, 1) if isinstance(gs_knots, (int, float)) else None
 
-            model_upper = f.get("t", "").upper()
+            # OpenSky's /states/all doesn't carry the aircraft type, so its
+            # records arrive with t="Unknown". Backfill from the OpenSky
+            # aircraft metadata DB by ICAO24 hex so heli classification and
+            # downstream emissions enrichment both see a real type code.
+            raw_type = str(f.get("t") or "").strip()
+            if not raw_type or raw_type.lower() == "unknown":
+                looked_up_type = lookup_aircraft_type(f.get("hex", ""))
+                if looked_up_type:
+                    f["t"] = looked_up_type
+                    raw_type = looked_up_type
+
+            model_upper = raw_type.upper()
             if model_upper == "TWR":
                 continue
 
             ac_category = "heli" if model_upper in _HELI_TYPES_BACKEND else "plane"
 
-            flights.append({
-                "callsign": flight_str,
-                "country": f.get("r", "N/A"),
-                "lng": float(lng),
-                "lat": float(lat),
-                "alt": alt_value,
-                "heading": heading,
-                "type": "flight",
-                "origin_loc": origin_loc,
-                "dest_loc": dest_loc,
-                "origin_name": origin_name,
-                "dest_name": dest_name,
-                "registration": f.get("r", "N/A"),
-                "model": f.get("t", "Unknown"),
-                "icao24": f.get("hex", ""),
-                "speed_knots": speed_knots,
-                "squawk": f.get("squawk", ""),
-                "airline_code": airline_code,
-                "aircraft_category": ac_category,
-                "nac_p": f.get("nac_p")
-            })
+            # Source attribution: prefer the explicit ``source`` tag stamped
+            # at fetch time (adsb.lol, OpenSky). If absent, fall back to the
+            # legacy ``supplemental_source`` (airplanes.live, adsb.fi) so
+            # supplementals are still attributed without changing their
+            # tagger. Final fallback "adsb.lol" preserves prior behavior for
+            # any caller that synthesizes records without going through one
+            # of our fetchers (e.g. tests).
+            source = (
+                f.get("source")
+                or f.get("supplemental_source")
+                or "adsb.lol"
+            )
+            flights.append(
+                {
+                    "callsign": flight_str,
+                    "country": f.get("r", "N/A"),
+                    "lng": float(lng),
+                    "lat": float(lat),
+                    "alt": alt_value,
+                    "heading": heading,
+                    "type": "flight",
+                    "origin_loc": origin_loc,
+                    "dest_loc": dest_loc,
+                    "origin_name": origin_name,
+                    "dest_name": dest_name,
+                    "registration": f.get("r", "N/A"),
+                    "model": f.get("t", "Unknown"),
+                    "icao24": f.get("hex", ""),
+                    "speed_knots": speed_knots,
+                    "squawk": f.get("squawk", ""),
+                    "airline_code": airline_code,
+                    "aircraft_category": ac_category,
+                    "nac_p": f.get("nac_p"),
+                    "source": source,
+                }
+            )
         except (ValueError, TypeError, KeyError, AttributeError) as loop_e:
             logger.error(f"Flight interpolation error: {loop_e}")
             continue
@@ -342,225 +591,292 @@ def _classify_and_publish(all_adsb_flights):
     for f in flights:
         enrich_with_plane_alert(f)
         enrich_with_tracked_names(f)
+        # Attach fuel-burn / CO2 emissions estimate when model is known.
+        # OpenSky's /states/all doesn't carry aircraft type, so OpenSky-sourced
+        # flights arrive with model="Unknown". For tracked planes, the
+        # Plane-Alert DB has the friendly type name in alert_type, and the
+        # emissions aliases table already maps those names to ICAO codes.
+        model = f.get("model")
+        if not model or model.strip().lower() in {"", "unknown"}:
+            model = f.get("alert_type") or ""
+        if model:
+            emi = get_emissions_info(model)
+            if emi:
+                # Cumulative fuel/CO2: multiply the per-hour rate by how
+                # long we've been observing this airframe. Users want to
+                # see the *amount* burned, not just the rate. If we've
+                # never seen this hex before, observed_seconds is 0 and
+                # the cumulative values are 0 until the next refresh —
+                # the rate is still useful info on its own.
+                observed_seconds = _record_flight_observation(
+                    f.get("icao24") or ""
+                )
+                elapsed_h = observed_seconds / 3600.0
+                emi = {
+                    **emi,
+                    "observed_seconds": observed_seconds,
+                    "fuel_gallons_burned": round(emi["fuel_gph"] * elapsed_h, 1),
+                    "co2_kg_emitted": round(emi["co2_kg_per_hour"] * elapsed_h, 1),
+                }
+                f["emissions"] = emi
 
-        callsign = f.get('callsign', '').strip().upper()
-        is_commercial_format = bool(re.match(r'^[A-Z]{3}\d{1,4}[A-Z]{0,2}$', callsign))
+        callsign = f.get("callsign", "").strip().upper()
+        is_commercial_format = bool(re.match(r"^[A-Z]{3}\d{1,4}[A-Z]{0,2}$", callsign))
 
-        if f.get('alert_category'):
-            f['type'] = 'tracked_flight'
+        if f.get("alert_category"):
+            f["type"] = "tracked_flight"
             tracked.append(f)
-        elif f.get('airline_code') or is_commercial_format:
-            f['type'] = 'commercial_flight'
+        elif f.get("airline_code") or is_commercial_format:
+            f["type"] = "commercial_flight"
             commercial.append(f)
-        elif f.get('model', '').upper() in PRIVATE_JET_TYPES:
-            f['type'] = 'private_jet'
+        elif f.get("model", "").upper() in PRIVATE_JET_TYPES:
+            f["type"] = "private_jet"
             private_jets.append(f)
         else:
-            f['type'] = 'private_ga'
+            f["type"] = "private_ga"
             private_ga.append(f)
 
     # --- Smart merge: protect against partial API failures ---
-    prev_commercial_count = len(latest_data.get('commercial_flights', []))
-    prev_total = prev_commercial_count + len(latest_data.get('private_jets', [])) + len(latest_data.get('private_flights', []))
+    with _data_lock:
+        prev_commercial_count = len(latest_data.get("commercial_flights", []))
+        prev_private_jets_count = len(latest_data.get("private_jets", []))
+        prev_private_flights_count = len(latest_data.get("private_flights", []))
+    prev_total = prev_commercial_count + prev_private_jets_count + prev_private_flights_count
     new_total = len(commercial) + len(private_jets) + len(private_ga)
 
     if new_total == 0:
         logger.warning("No civilian flights found! Skipping overwrite to prevent clearing the map.")
     elif prev_total > 100 and new_total < prev_total * 0.5:
-        logger.warning(f"Flight count dropped from {prev_total} to {new_total} (>50% loss). Keeping previous data to prevent flicker.")
+        logger.warning(
+            f"Flight count dropped from {prev_total} to {new_total} (>50% loss). Keeping previous data to prevent flicker."
+        )
     else:
         _now = time.time()
 
         def _merge_category(new_list, old_list, max_stale_s=120):
             by_icao = {}
             for f in old_list:
-                icao = f.get('icao24', '')
+                icao = f.get("icao24", "")
                 if icao:
-                    f.setdefault('_seen_at', _now)
-                    if (_now - f.get('_seen_at', _now)) < max_stale_s:
+                    f.setdefault("_seen_at", _now)
+                    if (_now - f.get("_seen_at", _now)) < max_stale_s:
                         by_icao[icao] = f
             for f in new_list:
-                icao = f.get('icao24', '')
+                icao = f.get("icao24", "")
                 if icao:
-                    f['_seen_at'] = _now
+                    f["_seen_at"] = _now
                     by_icao[icao] = f
                 else:
                     continue
             return list(by_icao.values())
 
         with _data_lock:
-            latest_data['commercial_flights'] = _merge_category(commercial, latest_data.get('commercial_flights', []))
-            latest_data['private_jets'] = _merge_category(private_jets, latest_data.get('private_jets', []))
-            latest_data['private_flights'] = _merge_category(private_ga, latest_data.get('private_flights', []))
+            latest_data["commercial_flights"] = _merge_category(
+                commercial, latest_data.get("commercial_flights", [])
+            )
+            latest_data["private_jets"] = _merge_category(
+                private_jets, latest_data.get("private_jets", [])
+            )
+            latest_data["private_flights"] = _merge_category(
+                private_ga, latest_data.get("private_flights", [])
+            )
 
     _mark_fresh("commercial_flights", "private_jets", "private_flights")
 
     with _data_lock:
         if flights:
-            latest_data['flights'] = flights
+            latest_data["flights"] = flights
 
     # Merge tracked civilian flights with tracked military flights
+    # Stale tracked flights (not seen in any ADS-B source for >5 min) are dropped.
+    _TRACKED_STALE_S = 300  # 5 minutes
+    _merge_ts = time.time()
+
     with _data_lock:
-        existing_tracked = list(latest_data.get('tracked_flights', []))
+        existing_tracked = copy.deepcopy(latest_data.get("tracked_flights", []))
 
     fresh_tracked_map = {}
     for t in tracked:
-        icao = t.get('icao24', '').upper()
+        icao = t.get("icao24", "").upper()
         if icao:
+            t["_seen_at"] = _merge_ts
             fresh_tracked_map[icao] = t
 
     merged_tracked = []
     seen_icaos = set()
+    stale_dropped = 0
     for old_t in existing_tracked:
-        icao = old_t.get('icao24', '').upper()
+        icao = old_t.get("icao24", "").upper()
         if icao in fresh_tracked_map:
             fresh = fresh_tracked_map[icao]
-            for key in ('alert_category', 'alert_operator', 'alert_special', 'alert_flag'):
+            for key in ("alert_category", "alert_operator", "alert_special", "alert_flag"):
                 if key in old_t and key not in fresh:
                     fresh[key] = old_t[key]
             merged_tracked.append(fresh)
             seen_icaos.add(icao)
         else:
-            merged_tracked.append(old_t)
-            seen_icaos.add(icao)
+            # Keep stale entry only if it was seen recently
+            age = _merge_ts - old_t.get("_seen_at", 0)
+            if age < _TRACKED_STALE_S:
+                merged_tracked.append(old_t)
+                seen_icaos.add(icao)
+            else:
+                stale_dropped += 1
 
     for icao, t in fresh_tracked_map.items():
         if icao not in seen_icaos:
             merged_tracked.append(t)
 
     with _data_lock:
-        latest_data['tracked_flights'] = merged_tracked
-    logger.info(f"Tracked flights: {len(merged_tracked)} total ({len(fresh_tracked_map)} fresh from civilian)")
+        latest_data["tracked_flights"] = merged_tracked
+    logger.info(
+        f"Tracked flights: {len(merged_tracked)} total ({len(fresh_tracked_map)} fresh from civilian, {stale_dropped} stale dropped)"
+    )
 
     # --- Trail Accumulation ---
-    def _accumulate_trail(f, now_ts, check_route=True):
-        hex_id = f.get('icao24', '').lower()
+    _TRAIL_INTERVAL_S = 60  # selected trails need enough resolution to show where unknown-route traffic came from
+
+    def _accumulate_trail(f, now_ts, attach_known_route_trail=False):
+        hex_id = f.get("icao24", "").lower()
         if not hex_id:
             return 0, None
-        if check_route and f.get('origin_name', 'UNKNOWN') != 'UNKNOWN':
-            f['trail'] = []
-            return 0, hex_id
-        lat, lng, alt = f.get('lat'), f.get('lng'), f.get('alt', 0)
+
+        def _known_route_name(value):
+            normalized = str(value or "").strip().upper()
+            return bool(normalized and normalized != "UNKNOWN")
+
+        has_known_route = bool(
+            (f.get("origin_loc") and f.get("dest_loc"))
+            or (_known_route_name(f.get("origin_name")) and _known_route_name(f.get("dest_name")))
+        )
+        lat, lng, alt = f.get("lat"), f.get("lng"), f.get("alt", 0)
         if lat is None or lng is None:
-            f['trail'] = flight_trails.get(hex_id, {}).get('points', [])
+            f["trail"] = [] if has_known_route and not attach_known_route_trail else flight_trails.get(hex_id, {}).get("points", [])
             return 0, hex_id
         point = [round(lat, 5), round(lng, 5), round(alt, 1), round(now_ts)]
         if hex_id not in flight_trails:
-            flight_trails[hex_id] = {'points': [], 'last_seen': now_ts}
+            flight_trails[hex_id] = {"points": [], "last_seen": now_ts}
         trail_data = flight_trails[hex_id]
-        if trail_data['points'] and trail_data['points'][-1][0] == point[0] and trail_data['points'][-1][1] == point[1]:
-            trail_data['last_seen'] = now_ts
+        # Only append a new point if enough time has passed since the last one
+        last_point_ts = trail_data["points"][-1][3] if trail_data["points"] else 0
+        if now_ts - last_point_ts < _TRAIL_INTERVAL_S:
+            trail_data["last_seen"] = now_ts
+        elif (
+            trail_data["points"]
+            and trail_data["points"][-1][0] == point[0]
+            and trail_data["points"][-1][1] == point[1]
+        ):
+            trail_data["last_seen"] = now_ts
         else:
-            trail_data['points'].append(point)
-            trail_data['last_seen'] = now_ts
-        if len(trail_data['points']) > 200:
-            trail_data['points'] = trail_data['points'][-200:]
-        f['trail'] = trail_data['points']
+            trail_data["points"].append(point)
+            trail_data["last_seen"] = now_ts
+        if len(trail_data["points"]) > 200:
+            trail_data["points"] = trail_data["points"][-200:]
+        # Keep known-route flights visually clean in the main payload; selected
+        # detail panels can still fetch this server-side trail to compute
+        # observed fuel/CO2 burn.
+        f["trail"] = [] if has_known_route and not attach_known_route_trail else trail_data["points"]
         return 1, hex_id
 
     now_ts = datetime.utcnow().timestamp()
-    all_lists = [commercial, private_jets, private_ga, existing_tracked]
+    with _data_lock:
+        commercial_snapshot = copy.deepcopy(latest_data.get("commercial_flights", []))
+        private_jets_snapshot = copy.deepcopy(latest_data.get("private_jets", []))
+        private_ga_snapshot = copy.deepcopy(latest_data.get("private_flights", []))
+        military_snapshot = copy.deepcopy(latest_data.get("military_flights", []))
+        tracked_snapshot = copy.deepcopy(latest_data.get("tracked_flights", []))
+        raw_flights_snapshot = list(latest_data.get("flights", []))
+
+    # Accumulate trails for every aircraft so selected details can estimate
+    # observed fuel/CO2 burn. Known-route flights keep an empty payload trail so
+    # the route line, not historical breadcrumbs, remains the visible map path.
+    route_check_lists = [commercial_snapshot, private_jets_snapshot, private_ga_snapshot]
+    always_trail_lists = [tracked_snapshot, military_snapshot]
     seen_hexes = set()
     trail_count = 0
     with _trails_lock:
-        for flist in all_lists:
+        for flist in route_check_lists:
             for f in flist:
-                count, hex_id = _accumulate_trail(f, now_ts, check_route=True)
+                count, hex_id = _accumulate_trail(f, now_ts, attach_known_route_trail=False)
                 trail_count += count
                 if hex_id:
                     seen_hexes.add(hex_id)
 
-        for mf in latest_data.get('military_flights', []):
-            count, hex_id = _accumulate_trail(mf, now_ts, check_route=False)
-            trail_count += count
-            if hex_id:
-                seen_hexes.add(hex_id)
+        for flist in always_trail_lists:
+            for f in flist:
+                count, hex_id = _accumulate_trail(f, now_ts, attach_known_route_trail=False)
+                trail_count += count
+                if hex_id:
+                    seen_hexes.add(hex_id)
 
-        tracked_hexes = {t.get('icao24', '').lower() for t in latest_data.get('tracked_flights', [])}
+        tracked_hexes = {t.get("icao24", "").lower() for t in tracked_snapshot}
         stale_keys = []
         for k, v in flight_trails.items():
             cutoff = now_ts - 1800 if k in tracked_hexes else now_ts - 300
-            if v['last_seen'] < cutoff:
+            if v["last_seen"] < cutoff:
                 stale_keys.append(k)
         for k in stale_keys:
             del flight_trails[k]
 
         if len(flight_trails) > _MAX_TRACKED_TRAILS:
-            sorted_keys = sorted(flight_trails.keys(), key=lambda k: flight_trails[k]['last_seen'])
+            sorted_keys = sorted(flight_trails.keys(), key=lambda k: flight_trails[k]["last_seen"])
             evict_count = len(flight_trails) - _MAX_TRACKED_TRAILS
             for k in sorted_keys[:evict_count]:
                 del flight_trails[k]
 
-    logger.info(f"Trail accumulation: {trail_count} active trails, {len(stale_keys)} pruned, {len(flight_trails)} total")
+    logger.info(
+        f"Trail accumulation: {trail_count} active trails, {len(stale_keys)} pruned, {len(flight_trails)} total"
+    )
+
+    with _data_lock:
+        latest_data["commercial_flights"] = commercial_snapshot
+        latest_data["private_jets"] = private_jets_snapshot
+        latest_data["private_flights"] = private_ga_snapshot
+        latest_data["tracked_flights"] = tracked_snapshot
+        latest_data["military_flights"] = military_snapshot
 
     # --- GPS Jamming Detection ---
     try:
-        jamming_grid = {}
-        raw_flights = latest_data.get('flights', [])
-        for rf in raw_flights:
-            rlat = rf.get('lat')
-            rlng = rf.get('lng') or rf.get('lon')
-            if rlat is None or rlng is None:
-                continue
-            nacp = rf.get('nac_p')
-            if nacp is None:
-                continue
-            grid_key = f"{int(rlat)},{int(rlng)}"
-            if grid_key not in jamming_grid:
-                jamming_grid[grid_key] = {"degraded": 0, "total": 0}
-            jamming_grid[grid_key]["total"] += 1
-            if nacp < 8:
-                jamming_grid[grid_key]["degraded"] += 1
-
-        jamming_zones = []
-        for gk, counts in jamming_grid.items():
-            if counts["total"] < 3:
-                continue
-            ratio = counts["degraded"] / counts["total"]
-            if ratio > 0.25:
-                lat_i, lng_i = gk.split(",")
-                severity = "low" if ratio < 0.5 else "medium" if ratio < 0.75 else "high"
-                jamming_zones.append({
-                    "lat": int(lat_i) + 0.5,
-                    "lng": int(lng_i) + 0.5,
-                    "severity": severity,
-                    "ratio": round(ratio, 2),
-                    "degraded": counts["degraded"],
-                    "total": counts["total"]
-                })
+        jamming_zones = detect_gps_jamming_zones(raw_flights_snapshot)
         with _data_lock:
-            latest_data['gps_jamming'] = jamming_zones
+            latest_data["gps_jamming"] = jamming_zones
         if jamming_zones:
             logger.info(f"GPS Jamming: {len(jamming_zones)} interference zones detected")
     except (ValueError, TypeError, KeyError, ZeroDivisionError) as e:
         logger.error(f"GPS Jamming detection error: {e}")
         with _data_lock:
-            latest_data['gps_jamming'] = []
+            latest_data["gps_jamming"] = []
 
     # --- Holding Pattern Detection ---
     try:
         holding_count = 0
-        all_flight_lists = [commercial, private_jets, private_ga,
-                            latest_data.get('tracked_flights', []),
-                            latest_data.get('military_flights', [])]
+        all_flight_lists = [
+            commercial,
+            private_jets,
+            private_ga,
+            tracked_snapshot,
+            military_snapshot,
+        ]
         with _trails_lock:
-            trails_snapshot = {k: v.get('points', [])[:] for k, v in flight_trails.items()}
+            trails_snapshot = {k: v.get("points", [])[:] for k, v in flight_trails.items()}
         for flist in all_flight_lists:
             for f in flist:
-                hex_id = f.get('icao24', '').lower()
+                hex_id = f.get("icao24", "").lower()
                 trail = trails_snapshot.get(hex_id, [])
                 if len(trail) < 6:
-                    f['holding'] = False
+                    f["holding"] = False
                     continue
                 pts = trail[-8:]
                 total_turn = 0.0
                 prev_bearing = 0.0
                 for i in range(1, len(pts)):
-                    lat1, lng1 = math.radians(pts[i-1][0]), math.radians(pts[i-1][1])
+                    lat1, lng1 = math.radians(pts[i - 1][0]), math.radians(pts[i - 1][1])
                     lat2, lng2 = math.radians(pts[i][0]), math.radians(pts[i][1])
                     dlng = lng2 - lng1
                     x = math.sin(dlng) * math.cos(lat2)
-                    y = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dlng)
+                    y = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(
+                        lat2
+                    ) * math.cos(dlng)
                     bearing = math.degrees(math.atan2(x, y)) % 360
                     if i > 1:
                         delta = abs(bearing - prev_bearing)
@@ -568,8 +884,8 @@ def _classify_and_publish(all_adsb_flights):
                             delta = 360 - delta
                         total_turn += delta
                     prev_bearing = bearing
-                f['holding'] = total_turn > 300
-                if f['holding']:
+                f["holding"] = total_turn > 300
+                if f["holding"]:
                     holding_count += 1
         if holding_count:
             logger.info(f"Holding patterns: {holding_count} aircraft circling")
@@ -577,7 +893,7 @@ def _classify_and_publish(all_adsb_flights):
         logger.error(f"Holding pattern detection error: {e}")
 
     with _data_lock:
-        latest_data['last_updated'] = datetime.utcnow().isoformat()
+        latest_data["last_updated"] = datetime.utcnow().isoformat()
 
 
 def _fetch_adsb_lol_regions():
@@ -588,7 +904,7 @@ def _fetch_adsb_lol_regions():
         {"lat": 35.0, "lon": 105.0, "dist": 2000},
         {"lat": -25.0, "lon": 133.0, "dist": 2000},
         {"lat": 0.0, "lon": 20.0, "dist": 2500},
-        {"lat": -15.0, "lon": -60.0, "dist": 2000}
+        {"lat": -15.0, "lon": -60.0, "dist": 2000},
     ]
 
     def _fetch_region(r):
@@ -597,8 +913,24 @@ def _fetch_adsb_lol_regions():
             res = fetch_with_curl(url, timeout=10)
             if res.status_code == 200:
                 data = res.json()
-                return data.get("ac", [])
-        except (requests.RequestException, ConnectionError, TimeoutError, ValueError, KeyError, json.JSONDecodeError, OSError) as e:
+                aircraft = data.get("ac", [])
+                # Stamp the source at the fetch site so attribution survives
+                # the OpenSky/supplemental dedupe-by-hex merge downstream.
+                # Previously adsb.lol records carried no marker while OpenSky
+                # records got ``is_opensky: True`` — which made flight tooltips
+                # look like everything came from OpenSky.
+                for a in aircraft:
+                    a["source"] = "adsb.lol"
+                return aircraft
+        except (
+            requests.RequestException,
+            ConnectionError,
+            TimeoutError,
+            ValueError,
+            KeyError,
+            json.JSONDecodeError,
+            OSError,
+        ) as e:
             logger.warning(f"Region fetch failed for lat={r['lat']}: {e}")
         return []
 
@@ -628,30 +960,40 @@ def _enrich_with_opensky_and_supplemental(adsb_flights):
         now = time.time()
         global last_opensky_fetch, cached_opensky_flights
 
-        if now - last_opensky_fetch > 300:
+        with _opensky_cache_lock:
+            _need_opensky = now - last_opensky_fetch > 300
+            if not _need_opensky:
+                opensky_snapshot = list(cached_opensky_flights)
+
+        if _need_opensky:
             token = opensky_client.get_token()
             if token:
-                opensky_regions = [
-                    {"name": "Africa", "bbox": {"lamin": -35.0, "lomin": -20.0, "lamax": 38.0, "lomax": 55.0}},
-                    {"name": "Asia", "bbox": {"lamin": 0.0, "lomin": 30.0, "lamax": 75.0, "lomax": 150.0}},
-                    {"name": "South America", "bbox": {"lamin": -60.0, "lomin": -95.0, "lamax": 15.0, "lomax": -30.0}}
-                ]
-
+                # One global /states/all query = 4 credits flat per OpenSky
+                # docs (https://openskynetwork.github.io/opensky-api/rest.html).
+                # At the current 5-minute cadence that's 4 × 288 = 1152
+                # credits/day, ~29% of the 4000-credit standard daily quota,
+                # and returns every aircraft worldwide in a single call.
+                # The previous 3-regional-bbox approach cost 12 credits/cycle
+                # AND missed North America, Europe, and Oceania entirely.
                 new_opensky_flights = []
-                for os_reg in opensky_regions:
-                    try:
-                        bb = os_reg["bbox"]
-                        os_url = f"https://opensky-network.org/api/states/all?lamin={bb['lamin']}&lomin={bb['lomin']}&lamax={bb['lamax']}&lomax={bb['lomax']}"
-                        headers = {"Authorization": f"Bearer {token}"}
-                        os_res = requests.get(os_url, headers=headers, timeout=15)
+                try:
+                    os_url = "https://opensky-network.org/api/states/all"
+                    headers = {"Authorization": f"Bearer {token}"}
+                    os_res = requests.get(os_url, headers=headers, timeout=30)
 
-                        if os_res.status_code == 200:
-                            os_data = os_res.json()
-                            states = os_data.get("states") or []
-                            logger.info(f"OpenSky: Fetched {len(states)} states for {os_reg['name']}")
-
-                            for s in states:
-                                new_opensky_flights.append({
+                    if os_res.status_code == 200:
+                        os_data = os_res.json()
+                        states = os_data.get("states") or []
+                        remaining = os_res.headers.get("X-Rate-Limit-Remaining", "?")
+                        logger.info(
+                            f"OpenSky: fetched {len(states)} global states "
+                            f"(credits remaining: {remaining})"
+                        )
+                        for s in states:
+                            if s[5] is None or s[6] is None:
+                                continue
+                            new_opensky_flights.append(
+                                {
                                     "hex": s[0],
                                     "flight": s[1].strip() if s[1] else "UNKNOWN",
                                     "r": s[2],
@@ -661,22 +1003,57 @@ def _enrich_with_opensky_and_supplemental(adsb_flights):
                                     "track": s[10] or 0,
                                     "gs": (s[9] * 1.94384) if s[9] else 0,
                                     "t": "Unknown",
-                                    "is_opensky": True
-                                })
-                        else:
-                            logger.warning(f"OpenSky API {os_reg['name']} failed: {os_res.status_code}")
-                    except (requests.RequestException, ConnectionError, TimeoutError, ValueError, KeyError, json.JSONDecodeError, OSError) as ex:
-                        logger.error(f"OpenSky fetching error for {os_reg['name']}: {ex}")
+                                    "is_opensky": True,
+                                    "source": "OpenSky",
+                                }
+                            )
+                    elif os_res.status_code == 429:
+                        retry_after = os_res.headers.get("X-Rate-Limit-Retry-After-Seconds", "?")
+                        logger.warning(
+                            f"OpenSky daily quota exhausted (4000 credits). "
+                            f"Retry after {retry_after}s. Serving stale data until reset."
+                        )
+                    else:
+                        logger.warning(
+                            f"OpenSky /states/all failed: HTTP {os_res.status_code}"
+                        )
+                except (
+                    requests.RequestException,
+                    ConnectionError,
+                    TimeoutError,
+                    ValueError,
+                    KeyError,
+                    json.JSONDecodeError,
+                    OSError,
+                ) as ex:
+                    logger.error(f"OpenSky global fetch error: {ex}")
 
-                cached_opensky_flights = new_opensky_flights
-                last_opensky_fetch = now
+                with _opensky_cache_lock:
+                    if new_opensky_flights:
+                        cached_opensky_flights = new_opensky_flights
+                    last_opensky_fetch = now
+                opensky_snapshot = new_opensky_flights or list(cached_opensky_flights)
+            else:
+                # Token refresh failed — fall back to existing cached data
+                with _opensky_cache_lock:
+                    opensky_snapshot = list(cached_opensky_flights)
 
         # Merge OpenSky (dedup by hex)
-        for osf in cached_opensky_flights:
+        for osf in opensky_snapshot:
             h = osf.get("hex")
             if h and h.lower().strip() not in seen_hex:
                 all_flights.append(osf)
                 seen_hex.add(h.lower().strip())
+
+        # Publish OpenSky-merged data immediately so users see flights even if
+        # supplemental gap-fill is slow or rate-limited (airplanes.live can take
+        # 100+ seconds when its regional endpoints are throttled).
+        if len(all_flights) > len(adsb_flights):
+            logger.info(
+                f"OpenSky merge: {len(all_flights) - len(adsb_flights)} additional aircraft, "
+                "publishing before supplemental gap-fill"
+            )
+            _classify_and_publish(all_flights)
 
         # Supplemental gap-fill
         try:
@@ -688,12 +1065,21 @@ def _enrich_with_opensky_and_supplemental(adsb_flights):
                     seen_hex.add(h)
             if gap_fill:
                 logger.info(f"Gap-fill: added {len(gap_fill)} aircraft to pipeline")
-        except (requests.RequestException, ConnectionError, TimeoutError, ValueError, KeyError, OSError) as e:
+        except (
+            requests.RequestException,
+            ConnectionError,
+            TimeoutError,
+            ValueError,
+            KeyError,
+            OSError,
+        ) as e:
             logger.warning(f"Supplemental source fetch failed (non-fatal): {e}")
 
         # Re-publish with enriched data
         if len(all_flights) > len(adsb_flights):
-            logger.info(f"Enrichment: {len(all_flights) - len(adsb_flights)} additional aircraft from OpenSky + supplemental")
+            logger.info(
+                f"Enrichment: {len(all_flights) - len(adsb_flights)} additional aircraft from OpenSky + supplemental"
+            )
             _classify_and_publish(all_flights)
     except Exception as e:
         logger.error(f"OpenSky/supplemental enrichment error: {e}")
@@ -705,20 +1091,28 @@ def fetch_flights():
     Phase 1 (fast): Fetch adsb.lol → classify → publish immediately (~3-5s)
     Phase 2 (background): Merge OpenSky + supplemental → re-publish (~15-30s)
     """
+    from services.fetchers._store import is_any_active
+
+    if not is_any_active("flights", "private", "jets", "tracked", "gps_jamming"):
+        return
     try:
         # Phase 1: adsb.lol — fast, parallel, publish immediately
         adsb_flights = _fetch_adsb_lol_regions()
         if adsb_flights:
             logger.info(f"adsb.lol: {len(adsb_flights)} aircraft — publishing immediately")
             _classify_and_publish(adsb_flights)
-
-            # Phase 2: kick off slow enrichment in background
-            threading.Thread(
-                target=_enrich_with_opensky_and_supplemental,
-                args=(adsb_flights,),
-                daemon=True,
-            ).start()
         else:
-            logger.warning("adsb.lol returned 0 aircraft")
+            logger.warning(
+                "adsb.lol returned 0 aircraft — relying on OpenSky/supplemental sources"
+            )
+
+        # Phase 2: always run — OpenSky is the fallback when adsb.lol blocks us
+        # (it has been known to 451 the bulk regional endpoint), and supplemental
+        # gap-fill should always run regardless of Phase 1 success.
+        threading.Thread(
+            target=_enrich_with_opensky_and_supplemental,
+            args=(adsb_flights,),
+            daemon=True,
+        ).start()
     except Exception as e:
         logger.error(f"Error fetching flights: {e}")

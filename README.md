@@ -17,9 +17,9 @@ https://github.com/user-attachments/assets/248208ec-62f7-49d1-831d-4bd0a1fa6852
 
 
 
-**ShadowBroker** is a real-time, multi-domain OSINT dashboard that aggregates live data from dozens of open-source intelligence feeds and renders them on a unified dark-ops map interface. It tracks aircraft, ships, satellites, earthquakes, conflict zones, CCTV networks, GPS jamming, and breaking geopolitical events — all updating in real time.
+**ShadowBroker** is a real-time, multi-domain OSINT dashboard that aggregates live data from dozens of open-source intelligence feeds and renders them on a unified dark-ops map interface. It tracks aircraft, ships, trains, satellites, earthquakes, conflict zones, CCTV networks, GPS jamming, internet health, and breaking geopolitical events — all updating in real time.
 
-Built with **Next.js**, **MapLibre GL**, **FastAPI**, and **Python**, it's designed for analysts, researchers, and enthusiasts who want a single-pane-of-glass view of global activity.
+Built with **Next.js 16**, **MapLibre GL**, **FastAPI**, and **Python**, it's designed for analysts, researchers, and enthusiasts who want a single-pane-of-glass view of global activity.
 
 ---
 
@@ -45,7 +45,10 @@ The project does not introduce new surveillance capabilities — it aggregates a
 * Monitor satellites passing overhead and see high-resolution satellite imagery
 * Nose around local emergency scanners
 * Watch naval traffic worldwide
-* Detect GPS jamming zones
+* Track live train movements across the US, Finland, and Israel
+* Detect GPS jamming zones and BGP hijacks
+* Monitor active DDoS attacks and internet outages in real time
+* Follow Israel Red Alerts and Ukraine air raid alerts live
 * Follow earthquakes and other natural disasters in real time
 
 ---
@@ -211,6 +214,38 @@ helm install shadowbroker ./helm/chart --create-namespace --namespace shadowbrok
 * **Sentinel-2 Intel Card** — Right-click anywhere on the map for a floating intel card showing the latest Sentinel-2 satellite photo with capture date, cloud cover %, and clickable full-resolution image (10m resolution, updated every ~5 days)
 * **SATELLITE Style Preset** — Quick-toggle high-res imagery via the STYLE button (DEFAULT → SATELLITE → FLIR → NVG → CRT)
 
+### 🚂 Train Tracking
+
+* **Amtrak (US)** — Live train positions via Amtraker v3 community API with route names, station stops, and delay status
+* **Digitraffic (Finland)** — Finnish railway network live positions
+* **Israel Railways** — Schedule-based train tracking
+* **Train Icons** — Direction-aware train icons with route information on click
+
+### 🚨 Air Raid Alerts
+
+* **Israel Red Alerts (Pikud HaOref)** — Real-time missile/rocket alerts via Tzofar WebSocket listener with push-based updates. Historical archive with calendar drill-down, threat classification, and alert-zone polygons. Database-backed persistence with listener backfill on startup.
+* **Ukraine Air Alerts** — Oblast-level air raid alerts polled every 30 seconds from alerts.in.ua. Historical drill-down modal with archive. Database-backed with listener backfill support.
+
+### 🌐 Internet Health (Cloudflare Radar)
+
+* **BGP Anomalies** — BGP hijack and route leak detection with animated arcs from hijacker to victim country. Persisted to SQLite, polled every 15 minutes. Requires `CLOUDFLARE_RADAR_TOKEN`.
+* **CF Traffic Anomalies** — Pulsing circles at country centroids showing unusual traffic patterns. Persisted to SQLite.
+* **Active DDoS Arcs** — Animated attack arcs showing L7 DDoS attacks by source and target. Ring buffer (no persistence — ephemeral data).
+* **Internet Quality Index (IQI)** — Per-country internet quality baselines, updated every 30 minutes.
+
+### 🌤️ Weather Layers
+
+* **Weather Radar** — Live precipitation radar overlay via RainViewer
+* **Cloud Cover Map** — Global cloud cover visualization via OpenWeatherMap
+* **Precipitation Map** — Rainfall/snowfall intensity overlay
+* **Pressure Map** — Atmospheric pressure visualization
+* **Wind Map** — Wind speed and direction overlay
+* **Temperature Map** — Global temperature heatmap
+
+### 🏛️ Military Bases
+
+* **Global Military Bases** — Military installations plotted from NTAD + OSINT data with branch classification (Army, Navy, Air Force, Marines, Coast Guard, Space Force). Filterable by country and branch with color-coded polygon boundaries.
+
 ### 📻 Software-Defined Radio (SDR)
 
 * **KiwiSDR Receivers** — 500+ public SDR receivers plotted worldwide with clustered amber markers
@@ -219,11 +254,18 @@ helm install shadowbroker ./helm/chart --create-namespace --namespace shadowbrok
 
 ### 📷 Surveillance
 
-* **CCTV Mesh** — 2,000+ live traffic cameras from:
+* **CCTV Mesh** — 2,000+ live traffic cameras from 15+ networks:
   * 🇬🇧 Transport for London JamCams
-  * 🇺🇸 Austin, TX TxDOT
-  * 🇺🇸 NYC DOT
+  * 🇺🇸 Austin TX, NYC DOT, Caltrans, Georgia DOT, Ohio DOT
   * 🇸🇬 Singapore LTA
+  * 🇩🇪 Autobahn (Germany)
+  * 🇫🇮 Digitraffic (Finland)
+  * 🇭🇰 Hong Kong TD
+  * 🇪🇸 DGT (Spain)
+  * 🇨🇦 Quebec MTQ, Alberta 511, Manitoba 511, Saskatchewan 511
+  * 🇦🇺 Main Roads WA, QLD Traffic
+  * 🇿🇦 iTraffic (South Africa)
+  * 🌍 OpenStreetMap global crawl + Windy webcams
   * Custom URL ingestion
 * **Feed Rendering** — Automatic detection & rendering of video, MJPEG, HLS, embed, satellite tile, and image feeds
 * **Clustered Map Display** — Green dots cluster with count labels, decluster on zoom
@@ -257,37 +299,45 @@ helm install shadowbroker ./helm/chart --create-namespace --namespace shadowbrok
 ## 🏗️ Architecture
 
 ```
-┌────────────────────────────────────────────────────────┐
-│                   FRONTEND (Next.js)                   │
-│                                                        │
-│  ┌─────────────┐    ┌──────────┐    ┌───────────────┐  │
-│  │ MapLibre GL │    │ NewsFeed │    │ Control Panels│  │
-│  │  2D WebGL   │    │  SIGINT  │    │ Layers/Filters│  │
-│  │ Map Render  │    │  Intel   │    │ Markets/Radio │  │
-│  └──────┬──────┘    └────┬─────┘    └───────┬───────┘  │
-│         └────────────────┼──────────────────┘          │
-│                          │ REST API (60s / 120s)       │
-├──────────────────────────┼─────────────────────────────┤
-│                    BACKEND (FastAPI)                   │
-│                          │                             │
-│  ┌───────────────────────┼──────────────────────────┐  │
-│  │               Data Fetcher (Scheduler)           │  │
-│  │                                                  │  │
-│  │  ┌──────────┬──────────┬──────────┬───────────┐  │  │
-│  │  │ OpenSky  │ adsb.lol │CelesTrak │   USGS    │  │  │
-│  │  │ Flights  │ Military │   Sats   │  Quakes   │  │  │
-│  │  ├──────────┼──────────┼──────────┼───────────┤  │  │
-│  │  │  AIS WS  │ Carrier  │  GDELT   │   CCTV    │  │  │
-│  │  │  Ships   │ Tracker  │ Conflict │  Cameras  │  │  │
-│  │  ├──────────┼──────────┼──────────┼───────────┤  │  │
-│  │  │ DeepState│   RSS    │  Region  │    GPS    │  │  │
-│  │  │ Frontline│  Intel   │ Dossier  │  Jamming  │  │  │
-│  │  ├──────────┼──────────┼──────────┼───────────┤  │  │
-│  │  │  NASA    │  NOAA    │  IODA    │  KiwiSDR  │  │  │
-│  │  │  FIRMS   │  Space Wx│ Outages  │  Radios   │  │  │
-│  │  └──────────┴──────────┴──────────┴───────────┘  │  │
-│  └──────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                     FRONTEND (Next.js 16)                    │
+│                                                              │
+│  ┌─────────────┐   ┌──────────┐   ┌───────────────────────┐ │
+│  │ MapLibre GL │   │ NewsFeed │   │    Control Panels     │ │
+│  │  2D WebGL   │   │  SIGINT  │   │ Layers/Filters/Alerts │ │
+│  │ Map Render  │   │  Intel   │   │ Markets/Radio/Weather │ │
+│  └──────┬──────┘   └────┬─────┘   └──────────┬────────────┘ │
+│         └────────────────┼───────────────────┘              │
+│                          │ REST API (60s / 120s)            │
+├──────────────────────────┼───────────────────────────────────┤
+│                    BACKEND (FastAPI)                         │
+│                          │                                  │
+│  ┌───────────────────────┼────────────────────────────────┐ │
+│  │              Data Fetcher (APScheduler)                │ │
+│  │                                                        │ │
+│  │  ┌──────────┬──────────┬──────────┬─────────────────┐  │ │
+│  │  │ OpenSky  │ adsb.lol │CelesTrak │ Amtraker/Rail  │  │ │
+│  │  │ Flights  │ Military │   Sats   │    Trains      │  │ │
+│  │  ├──────────┼──────────┼──────────┼─────────────────┤  │ │
+│  │  │  AIS WS  │ Carrier  │  GDELT   │     CCTV       │  │ │
+│  │  │  Ships   │ Tracker  │ Conflict │ 15+ Networks    │  │ │
+│  │  ├──────────┼──────────┼──────────┼─────────────────┤  │ │
+│  │  │ DeepState│   RSS    │  Region  │      GPS       │  │ │
+│  │  │ Frontline│  Intel   │ Dossier  │    Jamming     │  │ │
+│  │  ├──────────┼──────────┼──────────┼─────────────────┤  │ │
+│  │  │  NASA    │  NOAA    │  IODA    │   KiwiSDR      │  │ │
+│  │  │  FIRMS   │  Space Wx│ Outages  │    Radios      │  │ │
+│  │  ├──────────┼──────────┼──────────┼─────────────────┤  │ │
+│  │  │Cloudflare│  Pikud   │ Ukraine  │   Military     │  │ │
+│  │  │  Radar   │ HaOref WS│ Alerts  │    Bases       │  │ │
+│  │  └──────────┴──────────┴──────────┴─────────────────┘  │ │
+│  └────────────────────────────────────────────────────────┘ │
+│                                                              │
+│  ┌─ Databases (SQLite) ──────────────────────────────────┐  │
+│  │  cctv.db · pikud_alerts.db · ukraine_alerts.db        │  │
+│  │  bgp_anomalies.db · cf_anomalies.db                   │  │
+│  └───────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -319,6 +369,15 @@ helm install shadowbroker ./helm/chart --create-namespace --namespace shadowbrok
 | [NOAA SWPC](https://services.swpc.noaa.gov) | Space weather Kp index & solar events | ~120s | No |
 | [IODA (Georgia Tech)](https://ioda.inetintel.cc.gatech.edu) | Regional internet outage alerts | ~120s | No |
 | [DC Map (GitHub)](https://github.com/Ringmast4r/Data-Center-Map---Global) | Global data center locations | Static (cached 7d) | No |
+| [Amtraker](https://amtraker.com) | Amtrak live train positions | ~60s | No |
+| [Digitraffic (Finland)](https://www.digitraffic.fi) | Finnish railway live positions | ~60s | No |
+| [Israel Railways](https://www.rail.co.il) | Israel train schedule data | ~60s | No |
+| [Pikud HaOref / Tzofar](https://www.oref.org.il) | Israeli missile/rocket alerts | Real-time WebSocket | No |
+| [alerts.in.ua](https://alerts.in.ua) | Ukraine air raid alerts | ~30s | Optional |
+| [Cloudflare Radar](https://radar.cloudflare.com) | BGP anomalies, DDoS attacks, traffic anomalies, IQI | 5–30 min | **Yes** |
+| [RainViewer](https://www.rainviewer.com) | Weather radar imagery | ~10 min | No |
+| [OpenWeatherMap](https://openweathermap.org) | Cloud, precipitation, pressure, wind, temp maps | ~10 min | Optional |
+| [NTAD + OSINT](https://geodata.bts.gov) | Military base locations | Static | No |
 | [CARTO Basemaps](https://carto.com) | Dark map tiles | Continuous | No |
 
 ---
@@ -518,6 +577,19 @@ All layers are independently toggleable from the left panel:
 | Fire Hotspots (24h) | ❌ OFF | NASA FIRMS VIIRS thermal anomalies |
 | Internet Outages | ❌ OFF | IODA regional connectivity alerts |
 | Data Centers | ❌ OFF | Global data center locations (2,000+) |
+| Trains (Live) | ✅ ON | Amtrak, Digitraffic, Israel Railways |
+| Military Bases | ❌ OFF | Global military installations (NTAD + OSINT) |
+| Israel Red Alerts | ✅ ON | Pikud HaOref missile/rocket alerts |
+| Ukraine Air Alerts | ✅ ON | Oblast-level air raid alerts |
+| BGP Anomalies | ❌ OFF | Cloudflare Radar BGP hijacks & leaks |
+| CF Traffic Anomalies | ❌ OFF | Cloudflare Radar traffic anomalies |
+| Active DDoS Arcs | ❌ OFF | Cloudflare Radar L7 DDoS attacks |
+| Weather Radar | ❌ OFF | RainViewer precipitation radar |
+| Cloud Cover Map | ❌ OFF | OpenWeatherMap cloud overlay |
+| Precipitation Map | ❌ OFF | OpenWeatherMap rainfall/snowfall |
+| Pressure Map | ❌ OFF | OpenWeatherMap atmospheric pressure |
+| Wind Map | ❌ OFF | OpenWeatherMap wind speed/direction |
+| Temperature Map | ❌ OFF | OpenWeatherMap temperature heatmap |
 | Day / Night Cycle | ✅ ON | Solar terminator overlay |
 
 ---
@@ -541,48 +613,61 @@ The platform is optimized for handling massive real-time datasets:
 ## 📁 Project Structure
 
 ```
-live-risk-dashboard/
+Shadowbroker/
 ├── backend/
 │   ├── main.py                     # FastAPI app, middleware, API routes
-│   ├── carrier_cache.json          # Persisted carrier OSINT positions
-│   ├── cctv.db                     # SQLite CCTV camera database
 │   ├── config/
 │   │   └── news_feeds.json         # User-customizable RSS feed list (persists across restarts)
+│   ├── static_data/                # GeoJSON, centroids, tracked names
 │   └── services/
-│       ├── data_fetcher.py         # Core scheduler — fetches all data sources
-│       ├── ais_stream.py           # AIS WebSocket client (25K+ vessels)
-│       ├── carrier_tracker.py      # OSINT carrier position tracker
-│       ├── cctv_pipeline.py        # Multi-source CCTV camera ingestion
-│       ├── geopolitics.py          # GDELT + Ukraine frontline fetcher
+│       ├── data_fetcher.py         # Core scheduler — orchestrates all data sources
+│       ├── cctv_pipeline.py        # Multi-source CCTV ingestion (15+ networks)
 │       ├── region_dossier.py       # Right-click country/city intelligence
-│       ├── radio_intercept.py      # Scanner radio feed integration
-│       ├── kiwisdr_fetcher.py      # KiwiSDR receiver scraper
 │       ├── sentinel_search.py      # Sentinel-2 STAC imagery search
 │       ├── network_utils.py        # HTTP client with curl fallback
-│       ├── api_settings.py         # API key management
-│       └── news_feed_config.py     # RSS feed config manager (add/remove/weight feeds)
+│       ├── api_settings.py         # API key management & rotation
+│       ├── news_feed_config.py     # RSS feed config manager
+│       └── fetchers/
+│           ├── _store.py           # Shared state (latest_data, locks, timestamps)
+│           ├── flights.py          # Commercial flights, trails, GPS jamming
+│           ├── military.py         # Military flights, UAV detection
+│           ├── satellites.py       # CelesTrak TLE + SGP4 propagation
+│           ├── trains.py           # Amtrak, Digitraffic, Israel Railways
+│           ├── geo.py              # Ships, airports, frontlines, GDELT
+│           ├── pikud_haoref.py     # Israeli alerts + Tzofar WebSocket listener
+│           ├── ukraine_alerts.py   # Ukraine air raid alerts
+│           ├── cloudflare_radar.py # BGP anomalies, DDoS, traffic anomalies, IQI
+│           ├── infrastructure.py   # Internet outages, data centers, military bases, KiwiSDR
+│           ├── earth_observation.py # Earthquakes, FIRMS fires, space weather, weather
+│           ├── news.py             # RSS feed aggregation, clustering, risk assessment
+│           ├── financial.py        # Defense stocks, oil prices
+│           ├── plane_alert.py      # Aircraft enrichment DB
+│           └── yacht_alert.py      # Superyacht alert enrichment
 │
 ├── frontend/
 │   ├── src/
 │   │   ├── app/
 │   │   │   └── page.tsx            # Main dashboard — state, polling, layout
 │   │   └── components/
-│   │       ├── MaplibreViewer.tsx   # Core map — 2,000+ lines, all GeoJSON layers
+│   │       ├── MaplibreViewer.tsx   # Core map — 3,500+ lines, all GeoJSON layers
 │   │       ├── NewsFeed.tsx         # SIGINT feed + entity detail panels
-│   │       ├── WorldviewLeftPanel.tsx   # Data layer toggles
+│   │       ├── WorldviewLeftPanel.tsx   # Data layer toggles + freshness indicators
 │   │       ├── WorldviewRightPanel.tsx  # Search + filter sidebar
-│   │       ├── FilterPanel.tsx     # Basic layer filters
+│   │       ├── PikudDrilldownModal.tsx  # Israel Red Alert historical archive
+│   │       ├── UkraineDrilldownModal.tsx # Ukraine alert drill-down
+│   │       ├── WeatherModal.tsx    # Weather data visualization
 │   │       ├── AdvancedFilterModal.tsx  # Airport/country/owner filtering
 │   │       ├── MapLegend.tsx       # Dynamic legend with all icons
 │   │       ├── MarketsPanel.tsx    # Global financial markets ticker
 │   │       ├── RadioInterceptPanel.tsx # Scanner-style radio panel
-│   │       ├── FindLocateBar.tsx   # Search/locate bar
-│   │       ├── ChangelogModal.tsx  # Version changelog popup
 │   │       ├── SettingsPanel.tsx   # App settings (API Keys + News Feed manager)
-│   │       ├── ScaleBar.tsx        # Map scale indicator
-│   │       ├── WikiImage.tsx       # Wikipedia image fetcher
+│   │       ├── TopRightControls.tsx # Map controls (zoom, style, measurement)
 │   │       └── ErrorBoundary.tsx   # Crash recovery wrapper
 │   └── package.json
+│
+├── helm/chart/                     # Kubernetes Helm chart (bjw-s-labs template)
+├── docker-compose.yml              # Docker Compose for local deployment
+└── compose.sh                      # Auto-detect docker/podman wrapper
 ```
 
 ---
@@ -599,6 +684,10 @@ AIS_API_KEY=your_aisstream_key                # Maritime vessel tracking (aisstr
 OPENSKY_CLIENT_ID=your_opensky_client_id      # OAuth2 — higher rate limits for flight data
 OPENSKY_CLIENT_SECRET=your_opensky_secret     # OAuth2 — paired with Client ID above
 LTA_ACCOUNT_KEY=your_lta_key                  # Singapore CCTV cameras
+UKRAINE_ALERTS_TOKEN=your_token               # Ukraine air raid alerts (devs.alerts.in.ua)
+CLOUDFLARE_RADAR_TOKEN=your_token             # BGP anomalies, DDoS, traffic anomalies (Cloudflare Radar)
+ADMIN_KEY=your_admin_key                      # Protects settings & system endpoints (optional for local dev)
+LISTENER_URL=http://host:port                 # Signal Archive listener for alert backfill (optional)
 ```
 
 ### Frontend
@@ -606,6 +695,7 @@ LTA_ACCOUNT_KEY=your_lta_key                  # Singapore CCTV cameras
 | Variable | Where to set | Purpose |
 |---|---|---|
 | `BACKEND_URL` | `environment` in `docker-compose.yml`, or shell env | URL the Next.js server uses to proxy API calls to the backend. Defaults to `http://backend:8000`. **Runtime variable — no rebuild needed.** |
+| `NEXT_PUBLIC_OWM_API_KEY` | `.env` or shell env before build | OpenWeatherMap API key for weather map layers (optional, build-time) |
 
 **How it works:** The frontend proxies all `/api/*` requests through the Next.js server to `BACKEND_URL` using Docker's internal networking. Browsers only talk to port 3000; port 8000 never needs to be exposed externally. For local dev without Docker, `BACKEND_URL` defaults to `http://localhost:8000`.
 

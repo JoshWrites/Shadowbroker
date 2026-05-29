@@ -9,6 +9,11 @@ import { interpolatePosition } from "@/utils/positioning";
 import { darkStyle, lightStyle } from "@/components/map/styles/mapStyles";
 import ScaleBar from "@/components/ScaleBar";
 import maplibregl from "maplibre-gl";
+// Enable RTL text rendering for Hebrew/Arabic city names on map symbol layers
+maplibregl.setRTLTextPlugin(
+    "https://unpkg.com/@mapbox/mapbox-gl-rtl-text@0.2.3/mapbox-gl-rtl-text.min.js",
+    true,
+);
 import { AlertTriangle, Radio, Globe, Activity, Play } from "lucide-react";
 import WikiImage from "@/components/WikiImage";
 import { useTheme } from "@/lib/ThemeContext";
@@ -19,7 +24,7 @@ import {
     svgTanker, svgRecon, svgPlanePink, svgPlaneAlertRed, svgPlaneDarkBlue,
     svgPlaneWhiteAlert, svgHeliPink, svgHeliAlertRed, svgHeliDarkBlue,
     svgHeliBlue, svgHeliLime, svgHeliWhiteAlert, svgPlaneBlack, svgHeliBlack,
-    svgDrone, svgDataCenter, svgRadioTower, svgShipGray, svgShipRed, svgShipYellow,
+    svgDrone, svgDataCenter, svgRadioTower, svgTrain, svgShipGray, svgShipRed, svgShipYellow,
     svgShipBlue, svgShipWhite, svgShipPink, svgCarrier, svgCctv, svgWarning, svgThreat,
     svgTriangleYellow, svgTriangleRed,
     svgFireYellow, svgFireOrange, svgFireRed, svgFireDarkRed,
@@ -41,6 +46,7 @@ import {
 import { classifyAircraft } from "@/utils/aircraftClassification";
 import { makeSatSvg, MISSION_COLORS, MISSION_ICON_MAP } from "@/components/map/icons/SatelliteIcons";
 import { EMPTY_FC } from "@/components/map/mapConstants";
+
 import { useImperativeSource } from "@/components/map/hooks/useImperativeSource";
 import { ClusterCountLabels, TrackedFlightLabels, CarrierLabels, TrackedYachtLabels, UavLabels, EarthquakeLabels, ThreatMarkers } from "@/components/map/MapMarkers";
 import type { MaplibreViewerProps } from "@/types/dashboard";
@@ -48,18 +54,49 @@ import { INTERP_TICK_MS, ALERT_BOX_WIDTH_PX, ALERT_MAX_OFFSET_PX } from "@/lib/c
 import { useInterpolation } from "@/components/map/hooks/useInterpolation";
 import { useClusterLabels } from "@/components/map/hooks/useClusterLabels";
 import { spreadAlertItems } from "@/utils/alertSpread";
+import WeatherModal from "@/components/WeatherModal";
 import {
     buildEarthquakesGeoJSON, buildJammingGeoJSON, buildCctvGeoJSON, buildKiwisdrGeoJSON,
     buildFirmsGeoJSON, buildInternetOutagesGeoJSON, buildDataCentersGeoJSON, buildMilitaryBasesGeoJSON,
     buildGdeltGeoJSON, buildLiveuaGeoJSON, buildFrontlineGeoJSON,
     buildFlightLayerGeoJSON, buildUavGeoJSON,
-    buildSatellitesGeoJSON, buildShipsGeoJSON, buildCarriersGeoJSON,
+    buildSatellitesGeoJSON, buildShipsGeoJSON, buildCarriersGeoJSON, buildTrainsGeoJSON,
+    buildPowerPlantsGeoJSON, buildPskReporterGeoJSON, buildSatnogsStationsGeoJSON,
+    buildTinygsGeoJSON, buildScannerGeoJSON, buildSigintGeoJSON,
+    buildMeshtasticGeoJSON, buildAprsGeoJSON,
+    buildWeatherAlertsGeoJSON, buildWeatherAlertLabelsGeoJSON,
+    buildAirQualityGeoJSON, buildVolcanoesGeoJSON, buildFishingActivityGeoJSON,
+    buildVIIRSChangeNodesGeoJSON, buildCorrelationsGeoJSON,
+    buildWastewaterGeoJSON, buildCrowdThreatGeoJSON, buildUapSightingsGeoJSON,
+    buildSarAnomaliesGeoJSON, buildSarAoisGeoJSON,
+    BRANCH_COLORS,
     type FlightLayerConfig,
 } from "@/components/map/geoJSONBuilders";
+import type { MilBaseBranch } from "@/types/dashboard";
 
-const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, selectedEntity, onMouseCoords, onRightClick, regionDossier, regionDossierLoading, onViewStateChange, measureMode, onMeasureClick, measurePoints, gibsDate, gibsOpacity, viewBoundsRef, setTrackedSdr }: MaplibreViewerProps) => {
+const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, selectedEntity, onMouseCoords, onRightClick, regionDossier, regionDossierLoading, onViewStateChange, measureMode, onMeasureClick, measurePoints, gibsDate, gibsOpacity, viewBoundsRef, setTrackedSdr, pikudTimeOffset, pikudHistoryData, ukraineTimeOffset, ukraineHistoryData, bgpTimeOffset, bgpHistoryData, cfTimeOffset, cfHistoryData, milBaseFilter, cctvLoading }: MaplibreViewerProps) => {
     const mapRef = useRef<MapRef>(null);
     const [mapReady, setMapReady] = useState(false);
+
+    // RainViewer radar: fetch latest timestamp for tile URL
+    const [radarTimestamp, setRadarTimestamp] = useState<string | null>(null);
+    useEffect(() => {
+        if (!activeLayers.weather_radar) { setRadarTimestamp(null); return; }
+        let cancelled = false;
+        const fetchTs = () => {
+            fetch('https://api.rainviewer.com/public/weather-maps.json')
+                .then(r => r.json())
+                .then(d => {
+                    if (cancelled) return;
+                    const past = d?.radar?.past;
+                    if (past?.length) setRadarTimestamp(past[past.length - 1].path);
+                })
+                .catch(() => {});
+        };
+        fetchTs();
+        const iv = setInterval(fetchTs, 300000); // refresh every 5 min
+        return () => { cancelled = true; clearInterval(iv); };
+    }, [activeLayers.weather_radar]);
     const { theme } = useTheme();
     const mapThemeStyle = useMemo(() => theme === 'light' ? lightStyle : darkStyle, [theme]);
 
@@ -210,6 +247,10 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
         activeLayers.kiwisdr ? buildKiwisdrGeoJSON(data?.kiwisdr, inView) : null,
         [activeLayers.kiwisdr, data?.kiwisdr, inView]);
 
+    const trainsGeoJSON = useMemo(() =>
+        activeLayers.trains ? buildTrainsGeoJSON(data?.trains, inView) : null,
+        [activeLayers.trains, data?.trains, inView]);
+
     const firmsGeoJSON = useMemo(() =>
         activeLayers.firms ? buildFirmsGeoJSON(data?.firms_fires) : null,
         [activeLayers.firms, data?.firms_fires]);
@@ -222,9 +263,424 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
         activeLayers.datacenters ? buildDataCentersGeoJSON(data?.datacenters) : null,
         [activeLayers.datacenters, data?.datacenters]);
 
+    // ── New upstream layers ──
+    const powerPlantsGeoJSON = useMemo(() =>
+        activeLayers.power_plants ? buildPowerPlantsGeoJSON(data?.power_plants) : null,
+        [activeLayers.power_plants, data?.power_plants]);
+
+    const pskReporterGeoJSON = useMemo(() =>
+        activeLayers.psk_reporter ? buildPskReporterGeoJSON(data?.psk_reporter, inView) : null,
+        [activeLayers.psk_reporter, data?.psk_reporter, inView]);
+
+    const satnogsGeoJSON = useMemo(() =>
+        activeLayers.satnogs ? buildSatnogsStationsGeoJSON(data?.satnogs_stations, inView) : null,
+        [activeLayers.satnogs, data?.satnogs_stations, inView]);
+
+    const tinygsGeoJSON = useMemo(() =>
+        activeLayers.tinygs ? buildTinygsGeoJSON(data?.tinygs_satellites, inView) : null,
+        [activeLayers.tinygs, data?.tinygs_satellites, inView]);
+
+    const scannerGeoJSON = useMemo(() =>
+        activeLayers.scanners ? buildScannerGeoJSON(data?.scanners, inView) : null,
+        [activeLayers.scanners, data?.scanners, inView]);
+
+    const meshtasticGeoJSON = useMemo(() =>
+        activeLayers.sigint_meshtastic ? buildMeshtasticGeoJSON(data?.sigint) : null,
+        [activeLayers.sigint_meshtastic, data?.sigint]);
+
+    const aprsGeoJSON = useMemo(() =>
+        activeLayers.sigint_aprs ? buildAprsGeoJSON(data?.sigint) : null,
+        [activeLayers.sigint_aprs, data?.sigint]);
+
+    const weatherAlertsGeoJSON = useMemo(() =>
+        activeLayers.weather_alerts ? buildWeatherAlertsGeoJSON(data?.weather_alerts) : null,
+        [activeLayers.weather_alerts, data?.weather_alerts]);
+
+    const weatherAlertLabelsGeoJSON = useMemo(() =>
+        activeLayers.weather_alerts ? buildWeatherAlertLabelsGeoJSON(data?.weather_alerts) : null,
+        [activeLayers.weather_alerts, data?.weather_alerts]);
+
+    const airQualityGeoJSON = useMemo(() =>
+        activeLayers.air_quality ? buildAirQualityGeoJSON(data?.air_quality) : null,
+        [activeLayers.air_quality, data?.air_quality]);
+
+    const volcanoesGeoJSON = useMemo(() =>
+        activeLayers.volcanoes ? buildVolcanoesGeoJSON(data?.volcanoes) : null,
+        [activeLayers.volcanoes, data?.volcanoes]);
+
+    const fishingGeoJSON = useMemo(() =>
+        activeLayers.fishing_activity ? buildFishingActivityGeoJSON(data?.fishing_activity) : null,
+        [activeLayers.fishing_activity, data?.fishing_activity]);
+
+    const viirsChangeNodesGeoJSON = useMemo(() =>
+        activeLayers.viirs_nightlights ? buildVIIRSChangeNodesGeoJSON(data?.viirs_change_nodes) : null,
+        [activeLayers.viirs_nightlights, data?.viirs_change_nodes]);
+
+    const correlationsGeoJSON = useMemo(() =>
+        activeLayers.correlations ? buildCorrelationsGeoJSON(data?.correlations) : null,
+        [activeLayers.correlations, data?.correlations]);
+
+    // Upstream-added OSINT layers
+    const wastewaterGeoJSON = useMemo(() =>
+        activeLayers.wastewater ? buildWastewaterGeoJSON(data?.wastewater) : null,
+        [activeLayers.wastewater, data?.wastewater]);
+    const crowdthreatGeoJSON = useMemo(() =>
+        activeLayers.crowdthreat ? buildCrowdThreatGeoJSON(data?.crowdthreat) : null,
+        [activeLayers.crowdthreat, data?.crowdthreat]);
+    const uapSightingsGeoJSON = useMemo(() =>
+        activeLayers.uap_sightings ? buildUapSightingsGeoJSON(data?.uap_sightings) : null,
+        [activeLayers.uap_sightings, data?.uap_sightings]);
+    const sarAnomaliesGeoJSON = useMemo(() =>
+        activeLayers.sar ? buildSarAnomaliesGeoJSON(data?.sar_anomalies) : null,
+        [activeLayers.sar, data?.sar_anomalies]);
+    const sarAoisGeoJSON = useMemo(() =>
+        activeLayers.sar ? buildSarAoisGeoJSON(data?.sar_aois) : null,
+        [activeLayers.sar, data?.sar_aois]);
+
+    // --- Military base polygon LOD: show outlines when base ≥ 50px on screen ---
+    const PX_THRESHOLD = 50;
+    const milBasePolygonsRef = useRef<Record<number, any>>({}); // idx -> geometry
+    const milBasePendingRef = useRef<Record<number, boolean>>({});
+    const [milBasePolyVersion, setMilBasePolyVersion] = useState(0); // trigger re-render
+    const [dossierModal, setDossierModal] = useState<'sentinel' | 'weather' | null>(null);
+    // Reset modal choice when entity changes
+    useEffect(() => { if (selectedEntity?.type !== 'region_dossier') setDossierModal(null); }, [selectedEntity]);
+
+    // Compute which bases have active polygon rendering (used to hide their points)
+    const milBasePolyActiveRef = useRef<Record<number, boolean>>({});
+
+    // Compute polygon GeoJSON first so we know which indices are polygon-rendered
+    const milBasePolygonGeoJSON = useMemo(() => {
+        const active: Record<number, boolean> = {};
+        if (!activeLayers.military_bases || !data?.military_bases?.length) {
+            milBasePolyActiveRef.current = active;
+            return null;
+        }
+        const map = mapRef.current?.getMap();
+        if (!map) { milBasePolyActiveRef.current = active; return null; }
+        const zoom = viewState.zoom;
+        const mPerPx = 40075016.686 / (512 * Math.pow(2, zoom));
+
+        const needIds: number[] = [];
+        const features: any[] = [];
+        const polys = milBasePolygonsRef.current;
+
+        for (let i = 0; i < data.military_bases.length; i++) {
+            const base = data.military_bases[i];
+            if (milBaseFilter && Object.keys(milBaseFilter).length > 0) {
+                const owner = base.owner || base.country || '';
+                const ownerSet = milBaseFilter[owner];
+                if (!ownerSet || !ownerSet.has(base.branch as MilBaseBranch)) continue;
+            }
+            const diam = base.diameter_m || 0;
+            const screenPx = diam / mPerPx;
+
+            if (screenPx >= PX_THRESHOLD) {
+                if (!inView(base.lat, base.lng)) {
+                    delete polys[i];
+                    continue;
+                }
+                if (polys[i]) {
+                    active[i] = true;
+                    const color = BRANCH_COLORS[base.branch] || '#9ca3af';
+                    features.push({
+                        type: 'Feature',
+                        geometry: polys[i],
+                        properties: {
+                            id: `milbase-${i}`,
+                            type: 'military_base',
+                            name: base.name || 'Unknown',
+                            branch: base.branch,
+                            color,
+                        },
+                    });
+                } else {
+                    needIds.push(i);
+                }
+            } else {
+                delete polys[i];
+            }
+        }
+
+        // Fetch missing polygons
+        if (needIds.length > 0) {
+            const pending = milBasePendingRef.current;
+            const toFetch = needIds.filter(id => !pending[id]);
+            if (toFetch.length > 0) {
+                toFetch.forEach(id => { pending[id] = true; });
+                fetch(`${API_BASE}/api/military-bases/geometries`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids: toFetch }),
+                })
+                    .then(r => r.json())
+                    .then(d => {
+                        const geoms = d.geometries || {};
+                        for (const [idStr, geom] of Object.entries(geoms)) {
+                            const id = parseInt(idStr);
+                            milBasePolygonsRef.current[id] = geom;
+                            delete milBasePendingRef.current[id];
+                        }
+                        setMilBasePolyVersion(v => v + 1);
+                    })
+                    .catch(() => {
+                        toFetch.forEach(id => { delete pending[id]; });
+                    });
+            }
+        }
+
+        milBasePolyActiveRef.current = active;
+        if (!features.length) return null;
+        return { type: 'FeatureCollection', features };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeLayers.military_bases, data?.military_bases, milBaseFilter, viewState.zoom, mapBounds, milBasePolyVersion]);
+
+    // Build point GeoJSON, excluding bases that have active polygon rendering
     const militaryBasesGeoJSON = useMemo(() =>
-        activeLayers.military_bases ? buildMilitaryBasesGeoJSON(data?.military_bases) : null,
-        [activeLayers.military_bases, data?.military_bases]);
+        activeLayers.military_bases
+            ? buildMilitaryBasesGeoJSON(data?.military_bases, milBaseFilter, milBasePolyActiveRef.current)
+            : null,
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [activeLayers.military_bases, data?.military_bases, milBaseFilter, milBasePolygonGeoJSON]);
+
+    // Pikud HaOref: age buckets match Israeli shelter doctrine (10 min shelter window).
+    // In live mode: age is relative to now.
+    // In scrub mode: age is relative to the scrub position, so alerts at the leading
+    //   edge of the window show red, older ones in the same slice fade to orange/amber.
+    //   >30 min before scrub position are dropped (same rule as live).
+    //   0–10 min → "hot"    #ef4444 red    — shelter-in-place window
+    //   10–20 min→ "recent" #f97316 orange — recently cleared
+    //   20–30 min→ "old"    #eab308 amber  — fading
+    //   >30 min  → dropped
+    const pikudAlertsGeoJSON = useMemo(() => {
+        if (!activeLayers.pikud_alerts) return null;
+        const isLive = pikudTimeOffset === null || pikudTimeOffset === undefined || pikudTimeOffset === 0;
+        const alerts = isLive ? (data?.pikud_alerts ?? []) : (pikudHistoryData ?? []);
+        if (!alerts.length) return null;
+        // Reference point: now for live, scrub position for history
+        const refSec = isLive
+            ? Date.now() / 1000
+            : Date.now() / 1000 + (pikudTimeOffset ?? 0) * 60;
+        const features = alerts.flatMap((a: any, i: number) => {
+            const ageMins = (refSec - (a.ts ?? 0)) / 60;
+            // In history mode the fetch window already bounds to 30 min — don't re-filter.
+            // In live mode drop anything older than 30 min or in the future.
+            if (isLive && ageMins > 30) return [];
+            if (ageMins < 0) return [];
+            const ageClass = ageMins < 10 ? "hot"
+                : ageMins < 20 ? "recent"
+                : "old";
+            return [{
+                type: "Feature" as const,
+                geometry: { type: "Point" as const, coordinates: [a.lng, a.lat] },
+                properties: {
+                    id: `pikud-${i}`,
+                    type: "pikud_alert",
+                    city: a.city,
+                    category: a.cat_label ?? a.category ?? a.cat,
+                    cat: a.cat,
+                    color: a.color,
+                    threat: a.threat,
+                    is_drill: a.is_drill,
+                    timestamp: a.timestamp,
+                    ts: a.ts,
+                    age_class: ageClass,
+                },
+            }];
+        });
+        if (!features.length) return null;
+        return { type: "FeatureCollection" as const, features };
+    }, [activeLayers.pikud_alerts, data?.pikud_alerts, pikudTimeOffset, pikudHistoryData]);
+
+    // Ukraine oblast alerts — color-coded by alert type
+    const ukraineAlertsGeoJSON = useMemo(() => {
+        if (!activeLayers.ukraine_alerts) return null;
+        const isLive = ukraineTimeOffset === null || ukraineTimeOffset === undefined || ukraineTimeOffset === 0;
+        const alerts = isLive ? (data?.ukraine_alerts ?? []) : (ukraineHistoryData ?? []);
+        if (!alerts.length) return null;
+        const refSec = isLive
+            ? Date.now() / 1000
+            : Date.now() / 1000 + (ukraineTimeOffset ?? 0) * 60;
+        const features = alerts.flatMap((a: any, i: number) => {
+            const ageMins = (refSec - (a.ts ?? 0)) / 60;
+            if (isLive && ageMins > 60) return [];
+            if (ageMins < 0) return [];
+            return [{
+                type: "Feature" as const,
+                geometry: { type: "Point" as const, coordinates: [a.lng, a.lat] },
+                properties: {
+                    id: `ukraine-${i}`,
+                    type: "ukraine_alert",
+                    region: a.region,
+                    alert_type: a.type,
+                    type_label: a.type_label,
+                    color: a.color ?? "#ff2222",
+                    timestamp: a.timestamp,
+                    ts: a.ts,
+                    active: a.active ?? false,
+                },
+            }];
+        });
+        if (!features.length) return null;
+        return { type: "FeatureCollection" as const, features };
+    }, [activeLayers.ukraine_alerts, data?.ukraine_alerts, ukraineTimeOffset, ukraineHistoryData]);
+
+    // BGP anomaly arcs — great circle lines from hijacker to victim country centroid
+    const bgpAnomaliesGeoJSON = useMemo(() => {
+        if (!activeLayers.bgp_anomalies) return null;
+        const isLive = bgpTimeOffset === null || bgpTimeOffset === undefined || bgpTimeOffset === 0;
+        const events = isLive ? (data?.bgp_anomalies ?? []) : (bgpHistoryData ?? []);
+        if (!events.length) return null;
+        const refSec = isLive ? Date.now() / 1000 : Date.now() / 1000 + (bgpTimeOffset ?? 0) * 60;
+        const features = events.flatMap((ev: any) => {
+            const ageMins = (refSec - (ev.ts ?? 0)) / 60;
+            if (isLive && ageMins > 4320) return []; // 3 days in live
+            if (ageMins < 0) return [];
+            return [{
+                type: "Feature" as const,
+                geometry: {
+                    type: "LineString" as const,
+                    coordinates: [[ev.hijacker_lng, ev.hijacker_lat], [ev.victim_lng, ev.victim_lat]],
+                },
+                properties: {
+                    id: ev.id,
+                    type: "bgp_anomaly",
+                    bgp_type: ev.type,
+                    hijacker_country: ev.hijacker_country,
+                    hijacker_org: ev.hijacker_org,
+                    hijacker_asn: ev.hijacker_asn,
+                    victim_country: ev.victim_country,
+                    victim_org: ev.victim_org,
+                    victim_asn: ev.victim_asn,
+                    affected_prefixes: ev.affected_prefixes,
+                    confidence_score: ev.confidence_score,
+                    peer_count: ev.peer_count,
+                    timestamp: ev.timestamp,
+                    ts: ev.ts,
+                    color: ev.type === "hijack" ? "#ff4444" : "#ff9900",
+                },
+            }];
+        });
+        if (!features.length) return null;
+        return { type: "FeatureCollection" as const, features };
+    }, [activeLayers.bgp_anomalies, data?.bgp_anomalies, bgpTimeOffset, bgpHistoryData]);
+
+    // CF traffic anomaly points
+    const cfAnomaliesGeoJSON = useMemo(() => {
+        if (!activeLayers.cf_anomalies) return null;
+        const isLive = cfTimeOffset === null || cfTimeOffset === undefined || cfTimeOffset === 0;
+        const events = isLive ? (data?.cf_anomalies ?? []) : (cfHistoryData ?? []);
+        if (!events.length) return null;
+        const refSec = isLive ? Date.now() / 1000 : Date.now() / 1000 + (cfTimeOffset ?? 0) * 60;
+        const features = events.flatMap((ev: any) => {
+            const ageMins = (refSec - (ev.ts ?? 0)) / 60;
+            if (isLive && ageMins > 10080) return []; // 7 days
+            if (ageMins < 0) return [];
+            return [{
+                type: "Feature" as const,
+                geometry: { type: "Point" as const, coordinates: [ev.lng, ev.lat] },
+                properties: {
+                    id: ev.id,
+                    type: "cf_anomaly",
+                    location: ev.location,
+                    location_name: ev.location_name,
+                    status: ev.status,
+                    description: ev.description,
+                    timestamp: ev.timestamp,
+                    ts: ev.ts,
+                },
+            }];
+        });
+        if (!features.length) return null;
+        return { type: "FeatureCollection" as const, features };
+    }, [activeLayers.cf_anomalies, data?.cf_anomalies, cfTimeOffset, cfHistoryData]);
+
+    // Active DDoS lines — L7 top attack pairs (straight lines with directional pulse)
+    const PULSE_STEPS = 48;
+    const ddosArcsRef = useRef<{ coords: [number, number][]; props: Record<string, any> }[]>([]);
+    const activeDdosGeoJSON = useMemo(() => {
+        if (!activeLayers.active_ddos) { ddosArcsRef.current = []; return null; }
+        const attacks = data?.active_ddos ?? [];
+        if (!attacks.length) { ddosArcsRef.current = []; return null; }
+        const arcsForPulse: { coords: [number, number][]; props: Record<string, any> }[] = [];
+        const features = attacks.map((a: any) => {
+            const from: [number, number] = [a.origin_lng, a.origin_lat];
+            const to: [number, number] = [a.target_lng, a.target_lat];
+            // Interpolate N points along the straight line for the pulse segment
+            const coords: [number, number][] = [];
+            for (let i = 0; i <= PULSE_STEPS; i++) {
+                const t = i / PULSE_STEPS;
+                coords.push([from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t]);
+            }
+            const props = {
+                id: a.id,
+                type: "active_ddos",
+                origin_country: a.origin_country,
+                origin_country_name: a.origin_country_name,
+                target_country: a.target_country,
+                target_country_name: a.target_country_name,
+                requests_percent: a.requests_percent,
+                layer: a.layer,
+            };
+            arcsForPulse.push({ coords, props });
+            return {
+                type: "Feature" as const,
+                geometry: { type: "LineString" as const, coordinates: [from, to] },
+                properties: props,
+            };
+        });
+        ddosArcsRef.current = arcsForPulse;
+        return { type: "FeatureCollection" as const, features };
+    }, [activeLayers.active_ddos, data?.active_ddos]);
+
+    // DDoS directional pulse — a short bright segment sliding source→target along each line
+    const PULSE_LEN = 6; // segment length in interpolation steps
+    const ddosPulseAnimRef = useRef<number>(0);
+    const ddosPulsePhaseRef = useRef<number>(0);
+
+    useEffect(() => {
+        if (!activeDdosGeoJSON || !ddosArcsRef.current.length) {
+            if (ddosPulseAnimRef.current) cancelAnimationFrame(ddosPulseAnimRef.current);
+            return;
+        }
+
+        let lastTime = 0;
+        const speed = 0.03; // phase increment per ms (~2.2 sec full cycle)
+
+        const tick = (time: number) => {
+            const dt = lastTime ? time - lastTime : 16;
+            lastTime = time;
+            ddosPulsePhaseRef.current = (ddosPulsePhaseRef.current + speed * dt / 16) % (PULSE_STEPS + PULSE_LEN);
+
+            const phase = ddosPulsePhaseRef.current;
+            const features = ddosArcsRef.current.map((arc) => {
+                const start = Math.max(0, Math.floor(phase - PULSE_LEN));
+                const end = Math.min(arc.coords.length - 1, Math.floor(phase));
+                if (end <= start) return null;
+                return {
+                    type: "Feature" as const,
+                    geometry: {
+                        type: "LineString" as const,
+                        coordinates: arc.coords.slice(start, end + 1),
+                    },
+                    properties: arc.props,
+                };
+            }).filter(Boolean);
+
+            const fc = { type: "FeatureCollection" as const, features };
+
+            const map = mapRef.current?.getMap();
+            const src = map?.getSource("active-ddos-pulse") as any;
+            if (src?.setData) {
+                src.setData(fc);
+            }
+
+            ddosPulseAnimRef.current = requestAnimationFrame(tick);
+        };
+
+        ddosPulseAnimRef.current = requestAnimationFrame(tick);
+        return () => { if (ddosPulseAnimRef.current) cancelAnimationFrame(ddosPulseAnimRef.current); };
+    }, [activeDdosGeoJSON]);
 
     // Load Images into the Map Style once loaded
     const onMapLoad = useCallback((e: any) => {
@@ -234,11 +690,19 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
         const pendingImages: Record<string, string> = {};
 
         const loadImg = (id: string, url: string) => {
-            if (!map.hasImage(id)) {
+            if (map.hasImage(id)) return;
+            // data: URLs are synchronously decodable — use decode() to guarantee
+            // the image is ready before MapLibre's layer tries to render it.
+            const img = new Image();
+            img.crossOrigin = "anonymous";
+            img.src = url;
+            if (url.startsWith('data:')) {
+                // Inline SVG/data URLs: decode synchronously then add immediately
+                img.decode().then(() => {
+                    if (!map.hasImage(id)) map.addImage(id, img);
+                }).catch(() => {});
+            } else {
                 pendingImages[id] = url;
-                const img = new Image();
-                img.crossOrigin = "anonymous";
-                img.src = url;
                 img.onload = () => {
                     if (!map.hasImage(id)) map.addImage(id, img);
                     delete pendingImages[id];
@@ -246,7 +710,7 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
             }
         };
 
-        // Suppress "image not found" warnings — retry when the async load finishes
+        // Retry handler for external-URL images still loading when a layer fires
         map.on('styleimagemissing', (ev: any) => {
             const id = ev.id;
             const url = pendingImages[id];
@@ -340,6 +804,7 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
             loadImg('svgBizjetWhite', svgBizjetWhite);
             loadImg('svgDrone', svgDrone);
             loadImg('svgCctv', svgCctv);
+            loadImg('svgTrain', svgTrain);
             loadImg('icon-liveua-yellow', svgTriangleYellow);
             loadImg('icon-liveua-red', svgTriangleRed);
             // FIRMS fire icons
@@ -366,6 +831,50 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
 
         setMapReady(true);
     }, []);
+
+    // WebGL context loss recovery — browser/GPU drops context on sleep/wake
+    const contextLostRef = useRef(false);
+    useEffect(() => {
+        if (!mapReady) return;
+        const canvas = mapRef.current?.getMap()?.getCanvas();
+        if (!canvas) return;
+
+        const handleLost = (e: Event) => {
+            e.preventDefault();
+            contextLostRef.current = true;
+            console.warn('[MaplibreViewer] WebGL context lost');
+        };
+        const handleRestored = () => {
+            contextLostRef.current = false;
+            console.info('[MaplibreViewer] WebGL context restored');
+            mapRef.current?.getMap()?.triggerRepaint();
+        };
+
+        // Fallback: on wake from sleep, if context wasn't restored, force reload
+        const handleVisibility = () => {
+            if (document.visibilityState !== 'visible') return;
+            // Give the browser a moment to restore the context naturally
+            setTimeout(() => {
+                const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+                if (contextLostRef.current || !gl || gl.isContextLost()) {
+                    console.warn('[MaplibreViewer] Context still lost after wake — reloading page');
+                    window.location.reload();
+                } else {
+                    // Context survived but tiles may be stale — force repaint
+                    mapRef.current?.getMap()?.triggerRepaint();
+                }
+            }, 1000);
+        };
+
+        canvas.addEventListener('webglcontextlost', handleLost);
+        canvas.addEventListener('webglcontextrestored', handleRestored);
+        document.addEventListener('visibilitychange', handleVisibility);
+        return () => {
+            canvas.removeEventListener('webglcontextlost', handleLost);
+            canvas.removeEventListener('webglcontextrestored', handleRestored);
+            document.removeEventListener('visibilitychange', handleVisibility);
+        };
+    }, [mapReady]);
 
     // Build a set of tracked icao24s to exclude from other flight layers
     const trackedIcaoSet = useMemo(() => {
@@ -590,10 +1099,31 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
         cctvGeoJSON && 'cctv-layer',
         kiwisdrGeoJSON && 'kiwisdr-clusters',
         kiwisdrGeoJSON && 'kiwisdr-layer',
+        trainsGeoJSON && 'trains-layer',
         internetOutagesGeoJSON && 'internet-outages-layer',
         dataCentersGeoJSON && 'datacenters-layer',
         militaryBasesGeoJSON && 'military-bases-layer',
-        firmsGeoJSON && 'firms-viirs-layer'
+        milBasePolygonGeoJSON && 'military-bases-poly-fill',
+        firmsGeoJSON && 'firms-viirs-layer',
+        pikudAlertsGeoJSON && 'pikud-alerts-layer',
+        ukraineAlertsGeoJSON && 'ukraine-alerts-layer',
+        bgpAnomaliesGeoJSON && 'bgp-anomalies-layer',
+        cfAnomaliesGeoJSON && 'cf-anomalies-layer',
+        activeDdosGeoJSON && 'active-ddos-layer',
+        activeDdosGeoJSON && 'active-ddos-pulse-layer',
+        powerPlantsGeoJSON && 'power-plants-layer',
+        pskReporterGeoJSON && 'psk-reporter-layer',
+        satnogsGeoJSON && 'satnogs-layer',
+        scannerGeoJSON && 'scanner-layer',
+        airQualityGeoJSON && 'air-quality-layer',
+        volcanoesGeoJSON && 'volcanoes-layer',
+        fishingGeoJSON && 'fishing-layer',
+        viirsChangeNodesGeoJSON && 'viirs-change-nodes-layer',
+        wastewaterGeoJSON && 'wastewater-layer',
+        crowdthreatGeoJSON && 'crowdthreat-layer',
+        uapSightingsGeoJSON && 'uap-sightings-layer',
+        sarAnomaliesGeoJSON && 'sar-anomalies-layer',
+        sarAoisGeoJSON && 'sar-aois-fill',
     ].filter(Boolean) as string[];
 
 
@@ -607,6 +1137,24 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
     useImperativeSource(mapForHook, 'uavs', uavGeoJSON);
     useImperativeSource(mapForHook, 'satellites', satellitesGeoJSON);
     useImperativeSource(mapForHook, 'firms-fires', firmsGeoJSON, 2000);
+    // New upstream layers
+    useImperativeSource(mapForHook, 'tinygs', tinygsGeoJSON);
+    useImperativeSource(mapForHook, 'psk-reporter', pskReporterGeoJSON, 75);
+    useImperativeSource(mapForHook, 'satnogs', satnogsGeoJSON, 75);
+    useImperativeSource(mapForHook, 'scanners', scannerGeoJSON, 75);
+    useImperativeSource(mapForHook, 'power-plants', powerPlantsGeoJSON, 140);
+    useImperativeSource(mapForHook, 'viirs-change-nodes', viirsChangeNodesGeoJSON, 120);
+    useImperativeSource(mapForHook, 'air-quality-source', airQualityGeoJSON, 100);
+    useImperativeSource(mapForHook, 'volcanoes-source', volcanoesGeoJSON, 100);
+    useImperativeSource(mapForHook, 'fishing-source', fishingGeoJSON, 100);
+    useImperativeSource(mapForHook, 'meshtastic-source', meshtasticGeoJSON, 60);
+    useImperativeSource(mapForHook, 'aprs-source', aprsGeoJSON, 60);
+    // Upstream-added OSINT layers
+    useImperativeSource(mapForHook, 'wastewater-source', wastewaterGeoJSON, 100);
+    useImperativeSource(mapForHook, 'crowdthreat-source', crowdthreatGeoJSON, 100);
+    useImperativeSource(mapForHook, 'uap-sightings-source', uapSightingsGeoJSON, 100);
+    useImperativeSource(mapForHook, 'sar-anomalies-source', sarAnomaliesGeoJSON, 100);
+    useImperativeSource(mapForHook, 'sar-aois-source', sarAoisGeoJSON, 100);
 
     const handleMouseMove = useCallback((evt: any) => {
         if (onMouseCoords) onMouseCoords({ lat: evt.lngLat.lat, lng: evt.lngLat.lng });
@@ -667,7 +1215,7 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                             type: props.type,
                             name: props.name,
                             media_url: props.media_url,
-                            extra: props
+                            extra: { ...props, _clickLng: e.lngLat.lng, _clickLat: e.lngLat.lat }
                         });
                     } else {
                         onEntityClick?.(null);
@@ -734,6 +1282,75 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                                 'raster-fade-duration': 0
                             }}
                         />
+                    </Source>
+                )}
+
+                {/* RainViewer Weather Radar — global precipitation radar */}
+                {activeLayers.weather_radar && radarTimestamp && (
+                    <Source
+                        key={`rainviewer-${radarTimestamp}`}
+                        id="rainviewer-radar"
+                        type="raster"
+                        tiles={[`https://tilecache.rainviewer.com${radarTimestamp}/256/{z}/{x}/{y}/6/1_1.png`]}
+                        tileSize={256}
+                    >
+                        <Layer
+                            id="rainviewer-radar-layer"
+                            type="raster"
+                            paint={{ 'raster-opacity': 0.7, 'raster-fade-duration': 0 }}
+                        />
+                    </Source>
+                )}
+
+                {/* OpenWeatherMap tile layers */}
+                {activeLayers.weather_clouds && process.env.NEXT_PUBLIC_OWM_API_KEY && (
+                    <Source
+                        id="owm-clouds"
+                        type="raster"
+                        tiles={[`https://tile.openweathermap.org/map/clouds_new/{z}/{x}/{y}.png?appid=${process.env.NEXT_PUBLIC_OWM_API_KEY}`]}
+                        tileSize={256}
+                    >
+                        <Layer id="owm-clouds-layer" type="raster" paint={{ 'raster-opacity': 0.6, 'raster-fade-duration': 0 }} />
+                    </Source>
+                )}
+                {activeLayers.weather_precipitation && process.env.NEXT_PUBLIC_OWM_API_KEY && (
+                    <Source
+                        id="owm-precipitation"
+                        type="raster"
+                        tiles={[`https://tile.openweathermap.org/map/precipitation_new/{z}/{x}/{y}.png?appid=${process.env.NEXT_PUBLIC_OWM_API_KEY}`]}
+                        tileSize={256}
+                    >
+                        <Layer id="owm-precipitation-layer" type="raster" paint={{ 'raster-opacity': 0.7, 'raster-fade-duration': 0 }} />
+                    </Source>
+                )}
+                {activeLayers.weather_pressure && process.env.NEXT_PUBLIC_OWM_API_KEY && (
+                    <Source
+                        id="owm-pressure"
+                        type="raster"
+                        tiles={[`https://tile.openweathermap.org/map/pressure_new/{z}/{x}/{y}.png?appid=${process.env.NEXT_PUBLIC_OWM_API_KEY}`]}
+                        tileSize={256}
+                    >
+                        <Layer id="owm-pressure-layer" type="raster" paint={{ 'raster-opacity': 0.6, 'raster-fade-duration': 0 }} />
+                    </Source>
+                )}
+                {activeLayers.weather_wind && process.env.NEXT_PUBLIC_OWM_API_KEY && (
+                    <Source
+                        id="owm-wind"
+                        type="raster"
+                        tiles={[`https://tile.openweathermap.org/map/wind_new/{z}/{x}/{y}.png?appid=${process.env.NEXT_PUBLIC_OWM_API_KEY}`]}
+                        tileSize={256}
+                    >
+                        <Layer id="owm-wind-layer" type="raster" paint={{ 'raster-opacity': 0.7, 'raster-fade-duration': 0 }} />
+                    </Source>
+                )}
+                {activeLayers.weather_temperature && process.env.NEXT_PUBLIC_OWM_API_KEY && (
+                    <Source
+                        id="owm-temperature"
+                        type="raster"
+                        tiles={[`https://tile.openweathermap.org/map/temp_new/{z}/{x}/{y}.png?appid=${process.env.NEXT_PUBLIC_OWM_API_KEY}`]}
+                        tileSize={256}
+                    >
+                        <Layer id="owm-temperature-layer" type="raster" paint={{ 'raster-opacity': 0.6, 'raster-fade-duration': 0 }} />
                     </Source>
                 )}
 
@@ -1349,6 +1966,87 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                     </Source>
                 )}
 
+                {/* OpenRailwayMap — global railway infrastructure raster overlay */}
+                {activeLayers.railway_map && (
+                    <Source
+                        id="openrailwaymap"
+                        type="raster"
+                        tiles={['https://tiles.openrailwaymap.org/standard/{z}/{x}/{y}.png']}
+                        tileSize={256}
+                        maxzoom={18}
+                        attribution="OpenRailwayMap"
+                    >
+                        <Layer
+                            id="openrailwaymap-layer"
+                            type="raster"
+                            paint={{
+                                'raster-opacity': 0.75,
+                                'raster-fade-duration': 300,
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* Trains — live train position markers with clustering */}
+                {trainsGeoJSON && (
+                    <Source id="trains" type="geojson" data={trainsGeoJSON as any} cluster={true} clusterRadius={40} clusterMaxZoom={10}>
+                        {/* Cluster circles */}
+                        <Layer
+                            id="trains-clusters"
+                            type="circle"
+                            filter={['has', 'point_count']}
+                            paint={{
+                                'circle-radius': ['step', ['get', 'point_count'], 16, 10, 22, 50, 28, 200, 36],
+                                'circle-color': 'rgba(16, 185, 129, 0.15)',
+                                'circle-stroke-width': 1.5,
+                                'circle-stroke-color': 'rgba(16, 185, 129, 0.5)',
+                            }}
+                        />
+                        {/* Cluster count labels */}
+                        <Layer
+                            id="trains-cluster-count"
+                            type="symbol"
+                            filter={['has', 'point_count']}
+                            layout={{
+                                'icon-image': 'svgTrain',
+                                'icon-size': 0.85,
+                                'icon-allow-overlap': true,
+                                'text-field': '{point_count_abbreviated}',
+                                'text-size': 10,
+                                'text-offset': [0, 1.4],
+                                'text-allow-overlap': true,
+                                'text-font': ['Noto Sans Bold'],
+                            }}
+                            paint={{
+                                'text-color': '#10b981',
+                                'text-halo-color': '#000000',
+                                'text-halo-width': 1.5,
+                            }}
+                        />
+                        {/* Individual train icons */}
+                        <Layer
+                            id="trains-layer"
+                            type="symbol"
+                            filter={['!', ['has', 'point_count']]}
+                            layout={{
+                                'icon-image': 'svgTrain',
+                                'icon-size': ['interpolate', ['linear'], ['zoom'], 2, 0.5, 8, 0.8, 14, 1.0],
+                                'icon-allow-overlap': true,
+                                'text-field': ['step', ['zoom'], '', 8, ['get', 'name']],
+                                'text-size': 10,
+                                'text-offset': [0, 1.4],
+                                'text-allow-overlap': false,
+                                'text-font': ['Noto Sans Regular'],
+                            }}
+                            paint={{
+                                'text-color': '#10b981',
+                                'text-halo-color': '#000000',
+                                'text-halo-width': 1,
+                            }}
+                        />
+                    </Source>
+                )}
+
                 {/* Internet Outages — region-level grey markers with % and labels */}
                 {internetOutagesGeoJSON && (
                     <Source id="internet-outages" type="geojson" data={internetOutagesGeoJSON as any}>
@@ -1468,25 +2166,638 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                     </Source>
                 )}
 
-                {/* Military Base positions */}
+                {/* ═══ NEW UPSTREAM LAYERS ═══ */}
+
+                {/* Power Plants — amber clustered icons */}
+                {powerPlantsGeoJSON && (
+                    <Source id="power-plants" type="geojson" data={EMPTY_FC} cluster={true} clusterRadius={30} clusterMaxZoom={8}>
+                        <Layer
+                            id="power-plants-clusters"
+                            type="circle"
+                            minzoom={4}
+                            filter={['has', 'point_count']}
+                            paint={{
+                                'circle-color': '#92400e',
+                                'circle-radius': ['step', ['get', 'point_count'], 12, 10, 16, 50, 20],
+                                'circle-opacity': 0.7,
+                                'circle-stroke-width': 1,
+                                'circle-stroke-color': '#f59e0b',
+                            }}
+                        />
+                        <Layer
+                            id="power-plants-cluster-count"
+                            type="symbol"
+                            minzoom={4}
+                            filter={['has', 'point_count']}
+                            layout={{
+                                'text-field': '{point_count_abbreviated}',
+                                'text-font': ['Noto Sans Bold'],
+                                'text-size': 10,
+                                'text-allow-overlap': true,
+                            }}
+                            paint={{ 'text-color': '#fde68a' }}
+                        />
+                        <Layer
+                            id="power-plants-layer"
+                            type="circle"
+                            minzoom={4}
+                            filter={['!', ['has', 'point_count']]}
+                            paint={{
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 3, 6, 5, 10, 8],
+                                'circle-color': '#f59e0b',
+                                'circle-opacity': 0.8,
+                                'circle-stroke-width': 1,
+                                'circle-stroke-color': '#92400e',
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* PSK Reporter — green HF digital mode spots with clustering */}
+                {pskReporterGeoJSON && (
+                    <Source id="psk-reporter" type="geojson" data={EMPTY_FC} cluster={true} clusterRadius={50} clusterMaxZoom={14}>
+                        <Layer
+                            id="psk-reporter-cluster-pulse"
+                            type="circle"
+                            filter={['has', 'point_count']}
+                            minzoom={4}
+                            paint={{
+                                'circle-radius': ['step', ['get', 'point_count'], 20, 10, 26, 50, 32, 200, 40],
+                                'circle-color': 'rgba(34, 197, 94, 0.08)',
+                                'circle-stroke-width': 1.5,
+                                'circle-stroke-color': 'rgba(34, 197, 94, 0.35)',
+                                'circle-blur': 0.4,
+                            }}
+                        />
+                        <Layer
+                            id="psk-reporter-clusters"
+                            type="circle"
+                            filter={['has', 'point_count']}
+                            minzoom={4}
+                            paint={{
+                                'circle-radius': ['step', ['get', 'point_count'], 12, 10, 16, 50, 20, 200, 26],
+                                'circle-color': 'rgba(34, 197, 94, 0.6)',
+                                'circle-stroke-width': 1.5,
+                                'circle-stroke-color': 'rgba(34, 197, 94, 0.9)',
+                            }}
+                        />
+                        <Layer
+                            id="psk-reporter-layer"
+                            type="circle"
+                            filter={['!', ['has', 'point_count']]}
+                            minzoom={4}
+                            paint={{
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 2.5, 8, 4, 14, 6],
+                                'circle-color': '#22c55e',
+                                'circle-stroke-width': 0.5,
+                                'circle-stroke-color': 'rgba(34, 197, 94, 0.8)',
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* SatNOGS Ground Stations — teal clustered circles */}
+                {satnogsGeoJSON && (
+                    <Source id="satnogs" type="geojson" data={EMPTY_FC} cluster={true} clusterRadius={50} clusterMaxZoom={14}>
+                        <Layer
+                            id="satnogs-clusters"
+                            type="circle"
+                            filter={['has', 'point_count']}
+                            paint={{
+                                'circle-radius': ['step', ['get', 'point_count'], 12, 10, 16, 50, 20],
+                                'circle-color': 'rgba(20, 184, 166, 0.6)',
+                                'circle-stroke-width': 1.5,
+                                'circle-stroke-color': 'rgba(20, 184, 166, 0.9)',
+                            }}
+                        />
+                        <Layer
+                            id="satnogs-layer"
+                            type="circle"
+                            filter={['!', ['has', 'point_count']]}
+                            paint={{
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 3, 8, 5, 14, 7],
+                                'circle-color': '#14b8a6',
+                                'circle-opacity': 0.85,
+                                'circle-stroke-width': 1,
+                                'circle-stroke-color': '#0d9488',
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* TinyGS LoRa Satellites — purple circles */}
+                {tinygsGeoJSON && (
+                    <Source id="tinygs" type="geojson" data={EMPTY_FC}>
+                        <Layer
+                            id="tinygs-layer"
+                            type="circle"
+                            paint={{
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 0, 3, 6, 5, 10, 8],
+                                'circle-color': '#c084fc',
+                                'circle-opacity': 0.85,
+                                'circle-stroke-width': 1,
+                                'circle-stroke-color': '#9333ea',
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* Police Scanners (OpenMHZ) — red clustered circles */}
+                {scannerGeoJSON && (
+                    <Source id="scanners" type="geojson" data={EMPTY_FC} cluster={true} clusterRadius={50} clusterMaxZoom={14}>
+                        <Layer
+                            id="scanner-cluster-pulse"
+                            type="circle"
+                            filter={['has', 'point_count']}
+                            paint={{
+                                'circle-radius': ['step', ['get', 'point_count'], 20, 10, 26, 50, 32, 200, 40],
+                                'circle-color': 'rgba(220, 38, 38, 0.08)',
+                                'circle-stroke-width': 1.5,
+                                'circle-stroke-color': 'rgba(220, 38, 38, 0.35)',
+                                'circle-blur': 0.4,
+                            }}
+                        />
+                        <Layer
+                            id="scanner-clusters"
+                            type="circle"
+                            filter={['has', 'point_count']}
+                            paint={{
+                                'circle-radius': ['step', ['get', 'point_count'], 12, 10, 16, 50, 20],
+                                'circle-color': 'rgba(220, 38, 38, 0.6)',
+                                'circle-stroke-width': 1.5,
+                                'circle-stroke-color': 'rgba(220, 38, 38, 0.9)',
+                            }}
+                        />
+                        <Layer
+                            id="scanner-layer"
+                            type="circle"
+                            filter={['!', ['has', 'point_count']]}
+                            paint={{
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 3, 8, 5, 14, 7],
+                                'circle-color': '#dc2626',
+                                'circle-opacity': 0.8,
+                                'circle-stroke-width': 1,
+                                'circle-stroke-color': '#991b1b',
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* Meshtastic — green circle clusters */}
+                {meshtasticGeoJSON && (
+                    <Source id="meshtastic-source" type="geojson" data={EMPTY_FC} cluster={true} clusterRadius={42} clusterMaxZoom={8}>
+                        <Layer
+                            id="meshtastic-clusters"
+                            type="circle"
+                            filter={['has', 'point_count']}
+                            paint={{
+                                'circle-radius': ['step', ['get', 'point_count'], 12, 10, 16, 50, 22, 100, 28],
+                                'circle-color': 'rgba(34, 197, 94, 0.5)',
+                                'circle-stroke-width': 2,
+                                'circle-stroke-color': '#86efac',
+                            }}
+                        />
+                        <Layer
+                            id="meshtastic-cluster-count"
+                            type="symbol"
+                            filter={['has', 'point_count']}
+                            layout={{
+                                'text-field': ['get', 'point_count_abbreviated'],
+                                'text-size': 11,
+                                'text-font': ['Noto Sans Bold'],
+                                'text-allow-overlap': true,
+                            }}
+                            paint={{
+                                'text-color': '#052e16',
+                                'text-halo-color': '#86efac',
+                                'text-halo-width': 0.8,
+                            }}
+                        />
+                        <Layer
+                            id="meshtastic-circles"
+                            type="circle"
+                            filter={['!', ['has', 'point_count']]}
+                            paint={{
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 3, 8, 5, 14, 7],
+                                'circle-color': '#22c55e',
+                                'circle-opacity': 0.85,
+                                'circle-stroke-width': 1,
+                                'circle-stroke-color': '#15803d',
+                            }}
+                        />
+                        <Layer
+                            id="meshtastic-labels"
+                            type="symbol"
+                            minzoom={8}
+                            layout={{
+                                'text-field': ['get', 'callsign'],
+                                'text-size': 9,
+                                'text-offset': [0, 1.2],
+                                'text-anchor': 'top',
+                                'text-font': ['Noto Sans Regular'],
+                                'text-allow-overlap': false,
+                            }}
+                            paint={{
+                                'text-color': '#86efac',
+                                'text-halo-color': 'rgba(0,0,0,0.8)',
+                                'text-halo-width': 1,
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* APRS / JS8Call — pink circle clusters */}
+                {aprsGeoJSON && (
+                    <Source id="aprs-source" type="geojson" data={EMPTY_FC} cluster={true} clusterRadius={42} clusterMaxZoom={8}>
+                        <Layer
+                            id="aprs-clusters"
+                            type="circle"
+                            filter={['has', 'point_count']}
+                            paint={{
+                                'circle-radius': ['step', ['get', 'point_count'], 12, 10, 16, 50, 22, 100, 28],
+                                'circle-color': 'rgba(244, 114, 182, 0.5)',
+                                'circle-stroke-width': 2,
+                                'circle-stroke-color': '#f9a8d4',
+                            }}
+                        />
+                        <Layer
+                            id="aprs-cluster-count"
+                            type="symbol"
+                            filter={['has', 'point_count']}
+                            layout={{
+                                'text-field': ['get', 'point_count_abbreviated'],
+                                'text-size': 11,
+                                'text-font': ['Noto Sans Bold'],
+                                'text-allow-overlap': true,
+                            }}
+                            paint={{
+                                'text-color': '#4a0525',
+                                'text-halo-color': '#f9a8d4',
+                                'text-halo-width': 0.8,
+                            }}
+                        />
+                        <Layer
+                            id="aprs-triangles"
+                            type="circle"
+                            filter={['!', ['has', 'point_count']]}
+                            paint={{
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 3, 8, 5, 14, 7],
+                                'circle-color': '#f472b6',
+                                'circle-opacity': 0.85,
+                                'circle-stroke-width': 1,
+                                'circle-stroke-color': '#be185d',
+                            }}
+                        />
+                        <Layer
+                            id="aprs-labels"
+                            type="symbol"
+                            minzoom={8}
+                            layout={{
+                                'text-field': ['get', 'callsign'],
+                                'text-size': 9,
+                                'text-offset': [0, 1.2],
+                                'text-anchor': 'top',
+                                'text-font': ['Noto Sans Regular'],
+                                'text-allow-overlap': false,
+                            }}
+                            paint={{
+                                'text-color': '#f9a8d4',
+                                'text-halo-color': 'rgba(0,0,0,0.8)',
+                                'text-halo-width': 1,
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* Weather Alerts — severity-colored polygons with label overlay */}
+                {weatherAlertsGeoJSON && (
+                    <Source id="weather-alerts-source" type="geojson" data={(weatherAlertsGeoJSON as any)}>
+                        <Layer
+                            id="weather-alerts-fill"
+                            type="fill"
+                            paint={{
+                                'fill-color': ['get', 'color'],
+                                'fill-opacity': 0.12,
+                            }}
+                        />
+                        <Layer
+                            id="weather-alerts-outline"
+                            type="line"
+                            paint={{
+                                'line-color': ['get', 'color'],
+                                'line-width': 2,
+                                'line-opacity': 0.7,
+                                'line-dasharray': [4, 3],
+                            }}
+                        />
+                    </Source>
+                )}
+                {weatherAlertLabelsGeoJSON && (
+                    <Source id="weather-alert-labels-source" type="geojson" data={(weatherAlertLabelsGeoJSON as any)}>
+                        <Layer
+                            id="weather-alert-icons"
+                            type="symbol"
+                            layout={{
+                                'text-field': ['get', 'event'],
+                                'text-font': ['Noto Sans Bold'],
+                                'text-size': 11,
+                                'text-allow-overlap': false,
+                                'text-max-width': 14,
+                            }}
+                            paint={{
+                                'text-color': ['get', 'color'],
+                                'text-halo-color': '#000000',
+                                'text-halo-width': 1.5,
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* Air Quality — AQI-colored circles */}
+                {airQualityGeoJSON && (
+                    <Source id="air-quality-source" type="geojson" data={EMPTY_FC} cluster={true} clusterMaxZoom={8} clusterRadius={40}>
+                        <Layer
+                            id="air-quality-clusters"
+                            type="circle"
+                            filter={['has', 'point_count']}
+                            paint={{
+                                'circle-radius': ['step', ['get', 'point_count'], 12, 10, 16, 50, 20],
+                                'circle-color': '#94a3b8',
+                                'circle-opacity': 0.6,
+                            }}
+                        />
+                        <Layer
+                            id="air-quality-layer"
+                            type="circle"
+                            filter={['!', ['has', 'point_count']]}
+                            paint={{
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 3, 6, 5, 10, 8],
+                                'circle-color': ['get', 'color'],
+                                'circle-opacity': 0.75,
+                                'circle-stroke-width': 1,
+                                'circle-stroke-color': '#000',
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* Volcanoes — orange-colored circles */}
+                {volcanoesGeoJSON && (
+                    <Source id="volcanoes-source" type="geojson" data={EMPTY_FC}>
+                        <Layer
+                            id="volcanoes-layer"
+                            type="circle"
+                            paint={{
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 4, 6, 7, 10, 10],
+                                'circle-color': '#f97316',
+                                'circle-opacity': 0.85,
+                                'circle-stroke-width': 1.5,
+                                'circle-stroke-color': '#c2410c',
+                            }}
+                        />
+                        <Layer
+                            id="volcanoes-label"
+                            type="symbol"
+                            layout={{
+                                'text-field': ['step', ['zoom'], '', 6, ['get', 'name']],
+                                'text-font': ['Noto Sans Bold'],
+                                'text-size': 10,
+                                'text-offset': [0, 1.2],
+                                'text-anchor': 'top',
+                                'text-allow-overlap': false,
+                            }}
+                            paint={{
+                                'text-color': '#f97316',
+                                'text-halo-color': 'rgba(0,0,0,0.9)',
+                                'text-halo-width': 1,
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* Fishing Activity — sky blue clustered circles */}
+                {fishingGeoJSON && (
+                    <Source id="fishing-source" type="geojson" data={EMPTY_FC} cluster={true} clusterMaxZoom={6} clusterRadius={50}>
+                        <Layer
+                            id="fishing-clusters"
+                            type="circle"
+                            filter={['has', 'point_count']}
+                            paint={{
+                                'circle-radius': ['step', ['get', 'point_count'], 12, 10, 16, 50, 22],
+                                'circle-color': '#0ea5e9',
+                                'circle-opacity': 0.6,
+                            }}
+                        />
+                        <Layer
+                            id="fishing-layer"
+                            type="circle"
+                            filter={['!', ['has', 'point_count']]}
+                            paint={{
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 3, 6, 5, 10, 7],
+                                'circle-color': '#0ea5e9',
+                                'circle-opacity': 0.7,
+                                'circle-stroke-width': 1,
+                                'circle-stroke-color': '#0369a1',
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* VIIRS Change Detection Nodes */}
+                {viirsChangeNodesGeoJSON && (
+                    <Source id="viirs-change-nodes" type="geojson" data={EMPTY_FC}>
+                        <Layer
+                            id="viirs-change-nodes-layer"
+                            type="circle"
+                            paint={{
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 4, 6, 8, 10, 12],
+                                'circle-color': ['get', 'color'],
+                                'circle-opacity': 0.85,
+                                'circle-stroke-width': 1,
+                                'circle-stroke-color': 'rgba(255,255,255,0.4)',
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* Correlation Alerts — Emergent Intelligence grid squares */}
+                {correlationsGeoJSON && (
+                    <Source id="correlations" type="geojson" data={(correlationsGeoJSON as any)}>
+                        <Layer
+                            id="corr-rf-fill"
+                            type="fill"
+                            filter={['==', ['get', 'corr_type'], 'rf_anomaly']}
+                            minzoom={3}
+                            paint={{ 'fill-color': '#6b7280', 'fill-opacity': ['get', 'opacity'] }}
+                        />
+                        <Layer
+                            id="corr-rf-outline"
+                            type="line"
+                            filter={['==', ['get', 'corr_type'], 'rf_anomaly']}
+                            minzoom={3}
+                            paint={{ 'line-color': '#6b7280', 'line-width': 1.5, 'line-opacity': 0.6 }}
+                        />
+                        <Layer
+                            id="corr-mil-fill"
+                            type="fill"
+                            filter={['==', ['get', 'corr_type'], 'military_buildup']}
+                            minzoom={3}
+                            paint={{ 'fill-color': '#dc2626', 'fill-opacity': ['get', 'opacity'] }}
+                        />
+                        <Layer
+                            id="corr-mil-outline"
+                            type="line"
+                            filter={['==', ['get', 'corr_type'], 'military_buildup']}
+                            minzoom={3}
+                            paint={{ 'line-color': '#dc2626', 'line-width': 2, 'line-opacity': 0.7, 'line-dasharray': [4, 2] }}
+                        />
+                        <Layer
+                            id="corr-infra-fill"
+                            type="fill"
+                            filter={['==', ['get', 'corr_type'], 'infra_cascade']}
+                            minzoom={3}
+                            paint={{ 'fill-color': '#1f2937', 'fill-opacity': ['get', 'opacity'] }}
+                        />
+                        <Layer
+                            id="corr-infra-outline"
+                            type="line"
+                            filter={['==', ['get', 'corr_type'], 'infra_cascade']}
+                            minzoom={3}
+                            paint={{ 'line-color': '#374151', 'line-width': 1.5, 'line-opacity': 0.6 }}
+                        />
+                    </Source>
+                )}
+
+                {/* Wastewater pathogen surveillance — color by alert level */}
+                {wastewaterGeoJSON && (
+                    <Source id="wastewater-source" type="geojson" data={EMPTY_FC}>
+                        <Layer
+                            id="wastewater-layer"
+                            type="circle"
+                            paint={{
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 4, 6, 7, 10, 10],
+                                'circle-color': ['get', 'color'],
+                                'circle-opacity': 0.85,
+                                'circle-stroke-width': 1.5,
+                                'circle-stroke-color': 'rgba(255,255,255,0.4)',
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* CrowdThreat — crowdsourced threat intelligence */}
+                {crowdthreatGeoJSON && (
+                    <Source id="crowdthreat-source" type="geojson" data={EMPTY_FC}>
+                        <Layer
+                            id="crowdthreat-layer"
+                            type="circle"
+                            paint={{
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 3, 6, 6, 10, 9],
+                                'circle-color': ['coalesce', ['get', 'category_colour'], '#f59e0b'],
+                                'circle-opacity': 0.85,
+                                'circle-stroke-width': 1,
+                                'circle-stroke-color': 'rgba(255,255,255,0.5)',
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* UAP Sightings — color by reported shape */}
+                {uapSightingsGeoJSON && (
+                    <Source id="uap-sightings-source" type="geojson" data={EMPTY_FC}>
+                        <Layer
+                            id="uap-sightings-layer"
+                            type="circle"
+                            paint={{
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 3, 6, 6, 10, 9],
+                                'circle-color': ['get', 'color'],
+                                'circle-opacity': 0.85,
+                                'circle-stroke-width': 1,
+                                'circle-stroke-color': 'rgba(255,255,255,0.5)',
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* SAR (Synthetic Aperture Radar) — AOI watchboxes (polygons) */}
+                {sarAoisGeoJSON && (
+                    <Source id="sar-aois-source" type="geojson" data={EMPTY_FC}>
+                        <Layer
+                            id="sar-aois-fill"
+                            type="fill"
+                            paint={{ 'fill-color': '#eab308', 'fill-opacity': 0.08 }}
+                        />
+                        <Layer
+                            id="sar-aois-outline"
+                            type="line"
+                            paint={{ 'line-color': '#eab308', 'line-width': 1.5, 'line-opacity': 0.6, 'line-dasharray': [3, 2] }}
+                        />
+                    </Source>
+                )}
+
+                {/* SAR anomalies — color by anomaly kind */}
+                {sarAnomaliesGeoJSON && (
+                    <Source id="sar-anomalies-source" type="geojson" data={EMPTY_FC}>
+                        <Layer
+                            id="sar-anomalies-layer"
+                            type="circle"
+                            paint={{
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 4, 6, 7, 10, 11],
+                                'circle-color': ['get', 'color'],
+                                'circle-opacity': 0.85,
+                                'circle-stroke-width': 1.5,
+                                'circle-stroke-color': 'rgba(255,255,255,0.5)',
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* ═══ END NEW UPSTREAM LAYERS ═══ */}
+
+                {/* Military Base polygon outlines (LOD — visible when zoomed in) */}
+                {milBasePolygonGeoJSON && (
+                    <Source id="military-bases-poly" type="geojson" data={milBasePolygonGeoJSON as any}>
+                        <Layer
+                            id="military-bases-poly-fill"
+                            type="fill"
+                            paint={{
+                                'fill-color': ['get', 'color'],
+                                'fill-opacity': 0.15,
+                            }}
+                        />
+                        <Layer
+                            id="military-bases-poly-outline"
+                            type="line"
+                            paint={{
+                                'line-color': ['get', 'color'],
+                                'line-width': 1.5,
+                                'line-opacity': 0.7,
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* Military Base point positions */}
                 {militaryBasesGeoJSON && (
                     <Source id="military-bases" type="geojson" data={militaryBasesGeoJSON as any}>
                         <Layer
                             id="military-bases-layer"
                             type="circle"
                             paint={{
-                                'circle-color': ['match', ['get', 'side'], 'red', '#ef4444', 'green', '#22c55e', '#3b82f6'],
-                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 4, 6, 7, 10, 10],
-                                'circle-opacity': 0.8,
-                                'circle-stroke-width': 2,
-                                'circle-stroke-color': ['match', ['get', 'side'], 'red', '#fca5a5', 'green', '#86efac', '#93c5fd'],
+                                'circle-color': ['get', 'color'],
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 3, 6, 5, 10, 8],
+                                'circle-opacity': 0.85,
+                                'circle-stroke-width': 1.5,
+                                'circle-stroke-color': ['get', 'color'],
+                                'circle-stroke-opacity': 0.5,
                             }}
                         />
                         <Layer
                             id="military-bases-label"
                             type="symbol"
+                            minzoom={7}
                             layout={{
-                                'text-field': ['step', ['zoom'], '', 5, ['get', 'name']],
+                                'text-field': ['get', 'name'],
                                 'text-font': ['Noto Sans Bold'],
                                 'text-size': 10,
                                 'text-offset': [0, 1.4],
@@ -1494,9 +2805,209 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                                 'text-allow-overlap': false,
                             }}
                             paint={{
-                                'text-color': ['match', ['get', 'side'], 'red', '#fca5a5', 'green', '#86efac', '#93c5fd'],
+                                'text-color': ['get', 'color'],
                                 'text-halo-color': 'rgba(0,0,0,0.9)',
                                 'text-halo-width': 1,
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* Pikud HaOref — Israel red alerts, color-coded by age */}
+                {/* hot (<2min)=#ef4444, recent (2-10min)=#f97316, old (10-30min)=#eab308 */}
+                {pikudAlertsGeoJSON && (
+                    <Source id="pikud-alerts" type="geojson" data={pikudAlertsGeoJSON as any}>
+                        <Layer
+                            id="pikud-alerts-pulse"
+                            type="circle"
+                            paint={{
+                                'circle-color': ['match', ['get', 'age_class'],
+                                    'hot',    '#ef4444',
+                                    'recent', '#f97316',
+                                    'old',    '#eab308',
+                                    '#ef4444'],
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 8, 6, 14, 10, 20],
+                                'circle-opacity': ['match', ['get', 'age_class'],
+                                    'hot', 0.30, 'recent', 0.20, 'old', 0.12, 0.30],
+                                'circle-stroke-width': 0,
+                            }}
+                        />
+                        <Layer
+                            id="pikud-alerts-layer"
+                            type="circle"
+                            paint={{
+                                'circle-color': ['match', ['get', 'age_class'],
+                                    'hot',    '#ef4444',
+                                    'recent', '#f97316',
+                                    'old',    '#eab308',
+                                    '#ef4444'],
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 4, 6, 7, 10, 10],
+                                'circle-opacity': ['match', ['get', 'age_class'],
+                                    'hot', 1.0, 'recent', 0.85, 'old', 0.65, 1.0],
+                                'circle-stroke-width': 1.5,
+                                'circle-stroke-color': ['match', ['get', 'age_class'],
+                                    'hot',    '#fca5a5',
+                                    'recent', '#fdba74',
+                                    'old',    '#fde047',
+                                    '#fca5a5'],
+                            }}
+                        />
+                        <Layer
+                            id="pikud-alerts-label"
+                            type="symbol"
+                            minzoom={6}
+                            layout={{
+                                'text-field': ['get', 'city'],
+                                'text-font': ['Noto Sans Bold'],
+                                'text-size': 10,
+                                'text-offset': [0, 1.4],
+                                'text-anchor': 'top',
+                                'text-allow-overlap': false,
+                            }}
+                            paint={{
+                                'text-color': ['match', ['get', 'age_class'],
+                                    'hot',    '#fca5a5',
+                                    'recent', '#fdba74',
+                                    'old',    '#fde047',
+                                    '#fca5a5'],
+                                'text-halo-color': 'rgba(0,0,0,0.9)',
+                                'text-halo-width': 1,
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* Ukraine oblast alerts — color-coded by alert type */}
+                {ukraineAlertsGeoJSON && (
+                    <Source id="ukraine-alerts" type="geojson" data={ukraineAlertsGeoJSON as any}>
+                        <Layer
+                            id="ukraine-alerts-pulse"
+                            type="circle"
+                            paint={{
+                                'circle-color': ['get', 'color'],
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 20, 6, 35, 10, 50],
+                                'circle-opacity': 0.15,
+                                'circle-stroke-width': 0,
+                            }}
+                        />
+                        <Layer
+                            id="ukraine-alerts-layer"
+                            type="circle"
+                            paint={{
+                                'circle-color': ['get', 'color'],
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 6, 6, 10, 10, 14],
+                                'circle-opacity': ['case', ['get', 'active'], 1.0, 0.7],
+                                'circle-stroke-width': 1.5,
+                                'circle-stroke-color': ['get', 'color'],
+                            }}
+                        />
+                        <Layer
+                            id="ukraine-alerts-label"
+                            type="symbol"
+                            minzoom={5}
+                            layout={{
+                                'text-field': ['get', 'region'],
+                                'text-font': ['Noto Sans Bold'],
+                                'text-size': 10,
+                                'text-offset': [0, 1.4],
+                                'text-anchor': 'top',
+                                'text-allow-overlap': false,
+                            }}
+                            paint={{
+                                'text-color': ['get', 'color'],
+                                'text-halo-color': 'rgba(0,0,0,0.9)',
+                                'text-halo-width': 1,
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* BGP Anomaly arcs — hijack/leak lines between country centroids */}
+                {bgpAnomaliesGeoJSON && (
+                    <Source id="bgp-anomalies" type="geojson" data={bgpAnomaliesGeoJSON as any}>
+                        <Layer
+                            id="bgp-anomalies-layer"
+                            type="line"
+                            paint={{
+                                'line-color': ['get', 'color'],
+                                'line-width': ['interpolate', ['linear'], ['zoom'], 1, 1, 5, 2.5],
+                                'line-opacity': 0.75,
+                                'line-dasharray': [4, 2],
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* CF Traffic Anomaly points */}
+                {cfAnomaliesGeoJSON && (
+                    <Source id="cf-anomalies" type="geojson" data={cfAnomaliesGeoJSON as any}>
+                        <Layer
+                            id="cf-anomalies-pulse"
+                            type="circle"
+                            paint={{
+                                'circle-color': '#ff6600',
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 16, 6, 28, 10, 40],
+                                'circle-opacity': 0.12,
+                                'circle-stroke-width': 0,
+                            }}
+                        />
+                        <Layer
+                            id="cf-anomalies-layer"
+                            type="circle"
+                            paint={{
+                                'circle-color': '#ff6600',
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 5, 6, 8, 10, 12],
+                                'circle-opacity': 0.85,
+                                'circle-stroke-width': 1.5,
+                                'circle-stroke-color': '#ff6600',
+                            }}
+                        />
+                        <Layer
+                            id="cf-anomalies-label"
+                            type="symbol"
+                            minzoom={3}
+                            layout={{
+                                'text-field': ['get', 'location_name'],
+                                'text-font': ['Noto Sans Bold'],
+                                'text-size': 10,
+                                'text-offset': [0, 1.4],
+                                'text-anchor': 'top',
+                                'text-allow-overlap': false,
+                            }}
+                            paint={{
+                                'text-color': '#ff6600',
+                                'text-halo-color': 'rgba(0,0,0,0.9)',
+                                'text-halo-width': 1,
+                            }}
+                        />
+                    </Source>
+                )}
+
+                {/* Active DDoS arcs — great-circle lines origin → target */}
+                {activeDdosGeoJSON && (
+                    <Source id="active-ddos" type="geojson" data={activeDdosGeoJSON as any}>
+                        <Layer
+                            id="active-ddos-layer"
+                            type="line"
+                            paint={{
+                                'line-color': '#cc00ff',
+                                'line-width': ['interpolate', ['linear'], ['zoom'], 1, 1.2, 5, 2.5],
+                                'line-opacity': 0.35,
+                            }}
+                        />
+                    </Source>
+                )}
+                {/* DDoS directional pulse — bright segment sliding along each arc */}
+                {activeDdosGeoJSON && (
+                    <Source id="active-ddos-pulse" type="geojson" data={EMPTY_FC as any}>
+                        <Layer
+                            id="active-ddos-pulse-layer"
+                            type="line"
+                            paint={{
+                                'line-color': '#ee44ff',
+                                'line-width': ['interpolate', ['linear'], ['zoom'], 1, 2.5, 5, 5],
+                                'line-opacity': 0.9,
+                                'line-blur': 2,
                             }}
                         />
                     </Source>
@@ -1830,7 +3341,294 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                     );
                 })()}
 
+                {/* Train click popup — route, type, stations, speed */}
+                {selectedEntity?.type === 'train' && (() => {
+                    const train = data?.trains?.find((t: any) => t.id === selectedEntity.id);
+                    if (!train) return null;
+                    // Parse stations from the raw data (not from GeoJSON string)
+                    const stations = train.stations || [];
+                    const statusColor = (train.status || '').toLowerCase().includes('late') ? '#ff6644'
+                        : (train.status || '').toLowerCase().includes('early') ? '#00e5ff'
+                        : '#10b981';
+                    const serviceLabel = train.service_type === 'commuter' ? 'Commuter Rail'
+                        : train.service_type === 'highspeed' ? 'High-Speed Rail'
+                        : train.service_type === 'freight' ? 'Freight'
+                        : 'Intercity Passenger';
+                    return (
+                        <Popup
+                            longitude={train.lng} latitude={train.lat}
+                            closeButton={false} closeOnClick={false}
+                            onClose={() => onEntityClick?.(null)}
+                            anchor="bottom" offset={12}
+                            maxWidth="320px"
+                        >
+                            <div className="map-popup" style={{ borderWidth: 1, borderStyle: 'solid', borderColor: 'rgba(16, 185, 129, 0.5)' }}>
+                                <div className="flex justify-between items-start mb-1">
+                                    <div className="map-popup-title text-[#10b981]">
+                                        {train.name || 'UNKNOWN TRAIN'}
+                                        {train.train_num && <span className="text-[#888] ml-1">#{train.train_num}</span>}
+                                    </div>
+                                    <button onClick={() => onEntityClick?.(null)} className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] ml-2">✕</button>
+                                </div>
+                                <div className="map-popup-row">
+                                    Operator: <span className="text-white">{train.operator}</span>
+                                </div>
+                                <div className="map-popup-row">
+                                    Type: <span className="text-[#10b981]">{serviceLabel}</span>
+                                </div>
+                                {train.route_name && (
+                                    <div className="map-popup-row">
+                                        Route: <span className="text-[#00e5ff]">{train.route_name}</span>
+                                    </div>
+                                )}
+                                <div className="map-popup-row">
+                                    <span className="text-[#888]">{train.origin || train.origin_code}</span>
+                                    <span className="text-[#10b981] mx-1">→</span>
+                                    <span className="text-[#44ff88]">{train.destination || train.dest_code}</span>
+                                </div>
+                                {train.status && (
+                                    <div className="map-popup-row">
+                                        Status: <span style={{ color: statusColor }}>{train.status}</span>
+                                    </div>
+                                )}
+                                {train.status_msg && (
+                                    <div className="map-popup-row text-[9px] text-[#888]">{train.status_msg}</div>
+                                )}
+                                {typeof train.speed_mph === 'number' && train.speed_mph > 0 && (
+                                    <div className="map-popup-row">
+                                        Speed: <span className="text-[#00e5ff]">
+                                            {train.country === 'US'
+                                                ? `${Math.round(train.speed_mph)} mph`
+                                                : `${Math.round(train.speed_kmh || train.speed_mph * 1.60934)} km/h`
+                                            }
+                                        </span>
+                                    </div>
+                                )}
+                                {train.next_station && (
+                                    <div className="map-popup-row">
+                                        Next Stop: <span className="text-[#ffaa00]">{train.next_station}</span>
+                                    </div>
+                                )}
+                                {train.last_station && (
+                                    <div className="map-popup-row">
+                                        Last Station: <span className="text-[#888]">{train.last_station}</span>
+                                    </div>
+                                )}
+                                {/* Station list — compact scrollable route timeline */}
+                                {stations.length > 0 && (
+                                    <div className="mt-1.5 p-[5px_7px] bg-[rgba(16,185,129,0.06)] border border-[rgba(16,185,129,0.25)] rounded text-[9px] tracking-wide">
+                                        <div className="text-[#10b981] font-bold mb-1">ROUTE ({stations.length} stops)</div>
+                                        <div className="max-h-[120px] overflow-y-auto space-y-0.5 pr-1" style={{ scrollbarWidth: 'thin' }}>
+                                            {stations.map((s: any, idx: number) => {
+                                                const isDeparted = s.status === 'Departed';
+                                                const isEnroute = s.status === 'Enroute' || s.status === 'Next';
+                                                const dotColor = isDeparted ? '#888' : isEnroute ? '#ffaa00' : '#10b981';
+                                                const timeStr = s.arr_cmnt || s.dep_cmnt || '';
+                                                return (
+                                                    <div key={idx} className="flex items-center gap-1">
+                                                        <span style={{ color: dotColor }}>●</span>
+                                                        <span className={isDeparted ? 'text-[#666]' : isEnroute ? 'text-[#ffaa00]' : 'text-[#ccc]'}>
+                                                            {s.code ? `${s.name} (${s.code})` : s.name}
+                                                        </span>
+                                                        {timeStr && <span className="text-[#666] ml-auto text-[8px]">{timeStr}</span>}
+                                                        {s.bus && <span className="text-[#ff6644] ml-1" title="Bus connection">🚌</span>}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                )}
+                                {train.country && (
+                                    <div className="map-popup-row mt-1">
+                                        Country: <span className="text-[#888]">{train.country}</span>
+                                    </div>
+                                )}
+                            </div>
+                        </Popup>
+                    );
+                })()}
+
                 {/* Data Center click popup */}
+                {/* Wastewater pathogen surveillance popup */}
+                {selectedEntity?.type === 'wastewater' && selectedEntity.extra && (() => {
+                    const p: any = selectedEntity.extra;
+                    let pathogens: any[] = [];
+                    try { pathogens = JSON.parse(p.pathogens_json || '[]'); } catch { pathogens = []; }
+                    return (
+                        <Popup
+                            longitude={p._clickLng}
+                            latitude={p._clickLat}
+                            closeButton={false}
+                            closeOnClick={false}
+                            onClose={() => onEntityClick?.(null)}
+                            className="threat-popup"
+                            maxWidth="300px"
+                        >
+                            <div className="map-popup bg-[#0a1822] border border-cyan-500/40 text-[#cfe9f5] min-w-[210px]">
+                                <div className="map-popup-title text-[#00e5ff] border-b border-cyan-500/20 pb-1">
+                                    {p.name}
+                                </div>
+                                {(p.city || p.state) && (
+                                    <div className="map-popup-row">Location: <span className="text-white">{[p.city, p.state].filter(Boolean).join(', ')}</span></div>
+                                )}
+                                {p.population != null && p.population !== '' && (
+                                    <div className="map-popup-row">Population served: <span className="text-white">{Number(p.population).toLocaleString()}</span></div>
+                                )}
+                                {p.collection_date && (
+                                    <div className="map-popup-row">Collected: <span className="text-white">{p.collection_date}</span></div>
+                                )}
+                                {Number(p.alert_count) > 0 && p.alert_pathogens && (
+                                    <div className="mt-1.5 px-2 py-1 bg-red-500/15 border border-red-400/40 rounded text-[10px] text-[#ff6b6b]">
+                                        ALERT — {p.alert_pathogens}
+                                    </div>
+                                )}
+                                {pathogens.length > 0 && (
+                                    <div className="mt-1.5 space-y-0.5">
+                                        {pathogens.map((pt: any, i: number) => (
+                                            <div key={i} className="map-popup-row flex justify-between gap-2">
+                                                <span className={pt.alert ? 'text-[#ff6b6b]' : 'text-[#8fd3e8]'}>{pt.name}</span>
+                                                <span className="text-white">{pt.activity}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                                <div className="mt-1.5 text-[9px] text-cyan-600 tracking-wider">WASTEWATER SURVEILLANCE</div>
+                            </div>
+                        </Popup>
+                    );
+                })()}
+
+                {/* CrowdThreat popup */}
+                {selectedEntity?.type === 'crowdthreat' && selectedEntity.extra && (() => {
+                    const t: any = selectedEntity.extra;
+                    return (
+                        <Popup
+                            longitude={t._clickLng}
+                            latitude={t._clickLat}
+                            closeButton={false}
+                            closeOnClick={false}
+                            onClose={() => onEntityClick?.(null)}
+                            className="threat-popup"
+                            maxWidth="300px"
+                        >
+                            <div className="map-popup bg-[#1a0f0a] border border-amber-500/40 text-[#f5e6cf] min-w-[210px]">
+                                <div className="map-popup-title text-amber-400 border-b border-amber-500/20 pb-1">
+                                    {t.title}
+                                </div>
+                                {t.summary && <div className="map-popup-row text-[#e8d3a8]">{t.summary}</div>}
+                                {(t.category || t.subcategory) && (
+                                    <div className="map-popup-row">Type: <span className="text-white">{[t.category, t.subcategory].filter(Boolean).join(' / ')}</span></div>
+                                )}
+                                {(t.address || t.city) && (
+                                    <div className="map-popup-row">Location: <span className="text-white">{[t.address, t.city, t.country].filter(Boolean).join(', ')}</span></div>
+                                )}
+                                {t.timeago && <div className="map-popup-row">When: <span className="text-white">{t.timeago}</span></div>}
+                                {t.verification && <div className="map-popup-row">Verification: <span className="text-white">{t.verification}</span></div>}
+                                {t.source_url && (
+                                    <a href={t.source_url} target="_blank" rel="noopener noreferrer" className="mt-1 inline-block text-[10px] text-amber-300 underline">Source</a>
+                                )}
+                                <div className="mt-1.5 text-[9px] text-amber-600 tracking-wider">CROWDTHREAT</div>
+                            </div>
+                        </Popup>
+                    );
+                })()}
+
+                {/* UAP sighting popup */}
+                {selectedEntity?.type === 'uap_sighting' && selectedEntity.extra && (() => {
+                    const s: any = selectedEntity.extra;
+                    return (
+                        <Popup
+                            longitude={s._clickLng}
+                            latitude={s._clickLat}
+                            closeButton={false}
+                            closeOnClick={false}
+                            onClose={() => onEntityClick?.(null)}
+                            className="threat-popup"
+                            maxWidth="300px"
+                        >
+                            <div className="map-popup bg-[#0f0a1a] border border-violet-400/40 text-[#e9d5ff] min-w-[210px]">
+                                <div className="map-popup-title text-violet-300 border-b border-violet-400/20 pb-1">
+                                    {s.name}
+                                </div>
+                                {s.shape_raw && <div className="map-popup-row">Shape: <span className="text-white">{s.shape_raw}</span></div>}
+                                {(s.city || s.state || s.country) && (
+                                    <div className="map-popup-row">Location: <span className="text-white">{[s.city, s.state, s.country].filter(Boolean).join(', ')}</span></div>
+                                )}
+                                {s.date_time && <div className="map-popup-row">When: <span className="text-white">{s.date_time}</span></div>}
+                                {s.duration && <div className="map-popup-row">Duration: <span className="text-white">{s.duration}</span></div>}
+                                {s.summary && <div className="map-popup-row text-[#c4b5fd] mt-1">{s.summary}</div>}
+                                <div className="mt-1.5 text-[9px] text-violet-600 tracking-wider">{s.source || 'NUFORC'} · UAP SIGHTING</div>
+                            </div>
+                        </Popup>
+                    );
+                })()}
+
+                {/* SAR anomaly popup */}
+                {selectedEntity?.type === 'sar_anomaly' && selectedEntity.extra && (() => {
+                    const a: any = selectedEntity.extra;
+                    return (
+                        <Popup
+                            longitude={a._clickLng}
+                            latitude={a._clickLat}
+                            closeButton={false}
+                            closeOnClick={false}
+                            onClose={() => onEntityClick?.(null)}
+                            className="threat-popup"
+                            maxWidth="320px"
+                        >
+                            <div className="map-popup bg-[#1a1505] border border-yellow-500/40 text-[#f5edcf] min-w-[220px]">
+                                <div className="map-popup-title text-yellow-300 border-b border-yellow-500/20 pb-1">
+                                    {a.name}
+                                </div>
+                                {a.kind && <div className="map-popup-row">Kind: <span className="text-white">{String(a.kind).replace(/_/g, ' ')}</span></div>}
+                                {a.summary && <div className="map-popup-row text-[#e8dca8] mt-1">{a.summary}</div>}
+                                {(a.magnitude != null && a.magnitude !== 0) && (
+                                    <div className="map-popup-row">Magnitude: <span className="text-white">{a.magnitude}{a.magnitude_unit ? ` ${a.magnitude_unit}` : ''}</span></div>
+                                )}
+                                {(a.confidence != null && a.confidence !== 0) && (
+                                    <div className="map-popup-row">Confidence: <span className="text-white">{Math.round(Number(a.confidence) * 100)}%</span></div>
+                                )}
+                                {a.source_constellation && <div className="map-popup-row">Source: <span className="text-white">{a.source_constellation}</span></div>}
+                                {a.scene_count != null && Number(a.scene_count) > 0 && (
+                                    <div className="map-popup-row">Scenes: <span className="text-white">{a.scene_count}</span></div>
+                                )}
+                                {a.provenance_url && (
+                                    <a href={a.provenance_url} target="_blank" rel="noopener noreferrer" className="mt-1 inline-block text-[10px] text-yellow-300 underline">Provenance</a>
+                                )}
+                                <div className="mt-1.5 text-[9px] text-yellow-600 tracking-wider">SAR ANOMALY</div>
+                            </div>
+                        </Popup>
+                    );
+                })()}
+
+                {/* SAR AOI watchbox popup */}
+                {selectedEntity?.type === 'sar_aoi' && selectedEntity.extra && (() => {
+                    const a: any = selectedEntity.extra;
+                    return (
+                        <Popup
+                            longitude={a._clickLng}
+                            latitude={a._clickLat}
+                            closeButton={false}
+                            closeOnClick={false}
+                            onClose={() => onEntityClick?.(null)}
+                            className="threat-popup"
+                            maxWidth="300px"
+                        >
+                            <div className="map-popup bg-[#1a1505] border border-yellow-500/40 text-[#f5edcf] min-w-[200px]">
+                                <div className="map-popup-title text-yellow-300 border-b border-yellow-500/20 pb-1">
+                                    {a.name}
+                                </div>
+                                {a.description && <div className="map-popup-row text-[#e8dca8]">{a.description}</div>}
+                                {a.category && <div className="map-popup-row">Category: <span className="text-white">{a.category}</span></div>}
+                                {a.radius_km != null && Number(a.radius_km) > 0 && (
+                                    <div className="map-popup-row">Radius: <span className="text-white">{a.radius_km} km</span></div>
+                                )}
+                                <div className="mt-1.5 text-[9px] text-yellow-600 tracking-wider">SAR WATCHBOX (AOI)</div>
+                            </div>
+                        </Popup>
+                    );
+                })()}
+
                 {selectedEntity?.type === 'datacenter' && (() => {
                     const dc = data?.datacenters?.find((_: any, i: number) => `dc-${i}` === selectedEntity.id);
                     if (!dc) return null;
@@ -1889,16 +3687,13 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                     const base = data?.military_bases?.find((_: any, i: number) => `milbase-${i}` === selectedEntity.id);
                     if (!base) return null;
                     const branchLabel: Record<string, string> = {
-                        air_force: 'AIR FORCE', navy: 'NAVY', marines: 'MARINES', army: 'ARMY',
-                        missile: 'MISSILE FORCES', nuclear: 'NUCLEAR FACILITY',
+                        air_force: 'AIR FORCE', air_force_reserve: 'AF RESERVE', air_national_guard: 'AIR NAT\'L GUARD',
+                        army: 'ARMY', army_reserve: 'ARMY RESERVE', army_national_guard: 'ARMY NAT\'L GUARD',
+                        navy: 'NAVY', navy_reserve: 'NAVY RESERVE',
+                        marines: 'MARINES', marines_reserve: 'MARINES RESERVE',
+                        joint: 'JOINT', missile: 'MISSILE FORCES', nuclear: 'NUCLEAR FACILITY', other: 'OTHER',
                     };
-                    const isAdversary = ['China', 'Russia', 'North Korea'].includes(base.country);
-                    const isROC = base.country === 'Taiwan';
-                    const accentColor = isAdversary ? 'red' : isROC ? 'green' : 'blue';
-                    const borderCls = isAdversary ? 'border-red-400/40' : isROC ? 'border-green-400/40' : 'border-blue-400/40';
-                    const textCls = isAdversary ? 'text-[#fca5a5]' : isROC ? 'text-[#86efac]' : 'text-[#93c5fd]';
-                    const titleCls = isAdversary ? 'text-red-400 border-b border-red-400/20' : isROC ? 'text-green-400 border-b border-green-400/20' : 'text-blue-400 border-b border-blue-400/20';
-                    const footerCls = isAdversary ? 'text-red-600' : isROC ? 'text-green-600' : 'text-blue-600';
+                    const color = BRANCH_COLORS[base.branch] || '#9ca3af';
                     return (
                         <Popup
                             longitude={base.lng}
@@ -1909,18 +3704,175 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                             className="threat-popup"
                             maxWidth="280px"
                         >
-                            <div className={`map-popup bg-[#1a1035] border ${borderCls} ${textCls} min-w-[200px]`}>
-                                <div className={`map-popup-title ${titleCls} pb-1`}>
+                            <div className="map-popup bg-[#1a1035] min-w-[200px]" style={{ borderColor: `${color}66` }}>
+                                <div className="map-popup-title pb-1" style={{ color, borderBottomColor: `${color}33` }}>
                                     {base.name}
                                 </div>
-                                <div className="map-popup-row">
-                                    Operator: <span className="text-white">{base.operator}</span>
+                                <div className="map-popup-row" style={{ color: `${color}cc` }}>
+                                    Branch: <span className="text-white">{branchLabel[base.branch] || base.branch.toUpperCase()}</span>
                                 </div>
-                                <div className="map-popup-row">
-                                    Location: <span className="text-white">{base.country}</span>
+                                {base.operator && (
+                                    <div className="map-popup-row" style={{ color: `${color}cc` }}>
+                                        Component: <span className="text-white">{base.operator.toUpperCase()}</span>
+                                    </div>
+                                )}
+                                <div className="map-popup-row" style={{ color: `${color}cc` }}>
+                                    Location: <span className="text-white">{base.state ? `${base.state}, ` : ''}{base.country?.toUpperCase()}</span>
                                 </div>
-                                <div className={`mt-1.5 text-[9px] ${footerCls} tracking-wider`}>
+                                {base.joint && (
+                                    <div className="map-popup-row text-amber-400 font-semibold">JOINT BASE</div>
+                                )}
+                                <div className="mt-1.5 text-[9px] tracking-wider" style={{ color: `${color}99` }}>
                                     MILITARY BASE — {branchLabel[base.branch] || base.branch.toUpperCase()}
+                                </div>
+                            </div>
+                        </Popup>
+                    );
+                })()}
+
+                {/* BGP Anomaly click popup */}
+                {selectedEntity?.type === 'bgp_anomaly' && (() => {
+                    const p = selectedEntity.extra || {};
+                    const lng = p._clickLng; const lat = p._clickLat;
+                    if (lng == null || lat == null) return null;
+                    const isHijack = p.bgp_type === 'hijack';
+                    let prefixes: string[] = [];
+                    try { prefixes = JSON.parse(p.affected_prefixes || '[]'); } catch {}
+                    const ts = p.timestamp ? new Date(p.timestamp).toLocaleString() : '';
+                    return (
+                        <Popup longitude={lng} latitude={lat} closeButton={false} closeOnClick={false}
+                            onClose={() => onEntityClick?.(null)} anchor="bottom" offset={12} maxWidth="300px">
+                            <div className={`map-popup border ${isHijack ? 'border-red-500/50 bg-[#1a0a0a]' : 'border-orange-500/50 bg-[#1a1000]'} min-w-[220px]`}>
+                                <div className={`map-popup-title ${isHijack ? 'text-red-400' : 'text-orange-400'} border-b ${isHijack ? 'border-red-500/20' : 'border-orange-500/20'} pb-1 flex justify-between items-center`}>
+                                    <span>{isHijack ? 'BGP HIJACK' : 'BGP LEAK'}</span>
+                                    <button onClick={() => onEntityClick?.(null)} className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] ml-2">✕</button>
+                                </div>
+                                <div className="map-popup-row">
+                                    {isHijack ? 'Hijacker' : 'Leaker'}: <span className="text-white">{p.hijacker_org || `AS${p.hijacker_asn}`}</span>
+                                    <span className="text-[#8899aa] ml-1">({p.hijacker_country})</span>
+                                </div>
+                                <div className="map-popup-row">
+                                    Victim: <span className="text-white">{p.victim_org || `AS${p.victim_asn}`}</span>
+                                    <span className="text-[#8899aa] ml-1">({p.victim_country})</span>
+                                </div>
+                                {prefixes.length > 0 && (
+                                    <div className="map-popup-row">
+                                        Prefixes: <span className="text-[#aabbcc]">{prefixes.slice(0, 4).join(', ')}{prefixes.length > 4 ? ` +${prefixes.length - 4}` : ''}</span>
+                                    </div>
+                                )}
+                                <div className="map-popup-row">
+                                    Confidence: <span className={`font-bold ${(p.confidence_score || 0) >= 5 ? 'text-red-400' : 'text-yellow-400'}`}>{p.confidence_score}</span>
+                                    <span className="text-[#8899aa] ml-2">Peers: {p.peer_count}</span>
+                                </div>
+                                {ts && <div className="map-popup-row text-[#8899aa]">{ts}</div>}
+                                <div className={`mt-1.5 text-[9px] tracking-wider ${isHijack ? 'text-red-500/70' : 'text-orange-500/70'}`}>
+                                    CLOUDFLARE RADAR — BGP MONITORING
+                                </div>
+                            </div>
+                        </Popup>
+                    );
+                })()}
+
+                {/* CF Traffic Anomaly click popup */}
+                {selectedEntity?.type === 'cf_anomaly' && (() => {
+                    const p = selectedEntity.extra || {};
+                    const lng = p._clickLng; const lat = p._clickLat;
+                    if (lng == null || lat == null) return null;
+                    const isOngoing = (p.status || '').toUpperCase() === 'ONGOING';
+                    const ts = p.timestamp ? new Date(p.timestamp).toLocaleString() : '';
+                    return (
+                        <Popup longitude={lng} latitude={lat} closeButton={false} closeOnClick={false}
+                            onClose={() => onEntityClick?.(null)} anchor="bottom" offset={12} maxWidth="280px">
+                            <div className="map-popup border border-orange-500/50 bg-[#1a1000] min-w-[200px]">
+                                <div className="map-popup-title text-orange-400 border-b border-orange-500/20 pb-1 flex justify-between items-center">
+                                    <span>TRAFFIC ANOMALY</span>
+                                    <button onClick={() => onEntityClick?.(null)} className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] ml-2">✕</button>
+                                </div>
+                                <div className="map-popup-row">
+                                    Location: <span className="text-white font-semibold">{p.location_name || p.location}</span>
+                                </div>
+                                <div className="map-popup-row">
+                                    Status: <span className={`font-bold ${isOngoing ? 'text-red-400' : 'text-green-400'}`}>{isOngoing ? 'ONGOING' : 'RESOLVED'}</span>
+                                </div>
+                                {p.description && (
+                                    <div className="map-popup-row text-[#cccccc] text-[11px] leading-tight mt-1">{p.description}</div>
+                                )}
+                                {ts && <div className="map-popup-row text-[#8899aa] mt-1">{ts}</div>}
+                                <div className="mt-1.5 text-[9px] text-orange-500/70 tracking-wider">
+                                    CLOUDFLARE RADAR — TRAFFIC ANOMALY
+                                </div>
+                            </div>
+                        </Popup>
+                    );
+                })()}
+
+                {/* Active DDoS click popup */}
+                {selectedEntity?.type === 'active_ddos' && (() => {
+                    const p = selectedEntity.extra || {};
+                    const lng = p._clickLng; const lat = p._clickLat;
+                    if (lng == null || lat == null) return null;
+                    const pct = typeof p.requests_percent === 'number' ? p.requests_percent : parseFloat(p.requests_percent || '0');
+                    return (
+                        <Popup longitude={lng} latitude={lat} closeButton={false} closeOnClick={false}
+                            onClose={() => onEntityClick?.(null)} anchor="bottom" offset={12} maxWidth="280px">
+                            <div className="map-popup border border-purple-500/50 bg-[#150a25] min-w-[200px]">
+                                <div className="map-popup-title text-purple-400 border-b border-purple-500/20 pb-1 flex justify-between items-center">
+                                    <span>DDoS ATTACK</span>
+                                    <button onClick={() => onEntityClick?.(null)} className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] ml-2">✕</button>
+                                </div>
+                                <div className="map-popup-row">
+                                    Origin: <span className="text-white font-semibold">{p.origin_country_name || p.origin_country}</span>
+                                </div>
+                                <div className="map-popup-row">
+                                    Target: <span className="text-white font-semibold">{p.target_country_name || p.target_country}</span>
+                                </div>
+                                <div className="map-popup-row">
+                                    Traffic share: <span className={`font-bold ${pct >= 5 ? 'text-red-400' : pct >= 1 ? 'text-yellow-400' : 'text-purple-300'}`}>{pct.toFixed(2)}%</span>
+                                </div>
+                                <div className="map-popup-row text-[#8899aa]">
+                                    Layer: {p.layer || 'L7'}
+                                </div>
+                                <div className="mt-1.5 text-[9px] text-purple-500/70 tracking-wider">
+                                    CLOUDFLARE RADAR — L7 DDoS
+                                </div>
+                            </div>
+                        </Popup>
+                    );
+                })()}
+
+                {selectedEntity?.type === 'pikud_alert' && (() => {
+                    const alerts = (pikudTimeOffset !== null && pikudTimeOffset !== undefined && pikudTimeOffset !== 0)
+                        ? (pikudHistoryData ?? [])
+                        : (data?.pikud_alerts ?? []);
+                    const alert = alerts.find((_: any, i: number) => `pikud-${i}` === selectedEntity.id);
+                    if (!alert) return null;
+                    return (
+                        <Popup
+                            longitude={(alert as any).lng}
+                            latitude={(alert as any).lat}
+                            closeButton={false}
+                            closeOnClick={false}
+                            onClose={() => onEntityClick?.(null)}
+                            className="threat-popup"
+                            maxWidth="240px"
+                        >
+                            <div className="map-popup bg-[#1a0a0a] border border-red-500/50 text-[#fca5a5] min-w-[180px]">
+                                <div className="map-popup-title text-red-400 border-b border-red-500/20 pb-1" dir="rtl">
+                                    {(alert as any).city}
+                                </div>
+                                <div className="map-popup-row">
+                                    Type: <span className="text-white">{(alert as any).cat_label ?? (alert as any).category ?? (alert as any).cat}</span>
+                                </div>
+                                <div className="map-popup-row">
+                                    Time: <span className="text-white">{(alert as any).timestamp}</span>
+                                </div>
+                                {(alert as any).area && (
+                                    <div className="map-popup-row">
+                                        Area: <span className="text-white" dir="rtl">{(alert as any).area}</span>
+                                    </div>
+                                )}
+                                <div className="mt-1.5 text-[9px] tracking-wider" style={{ color: (alert as any).color || '#ef4444' }}>
+                                    {(alert as any).is_drill ? 'DRILL' : 'RED ALERT'} — PIKUD HAOREF
                                 </div>
                             </div>
                         </Popup>
@@ -2108,29 +4060,80 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                         );
                 })()}
 
-                {/* REGION DOSSIER — location pin on map (full intel shown in right panel) */}
+                {/* REGION DOSSIER — pin + popup chooser */}
                 {selectedEntity?.type === 'region_dossier' && selectedEntity.extra && (
-                    <Marker
-                        longitude={selectedEntity.extra.lng}
-                        latitude={selectedEntity.extra.lat}
-                        anchor="bottom"
-                        style={{ zIndex: 10 }}
-                    >
-                        <div className="flex flex-col items-center pointer-events-none">
-                            {/* Pulsing ring */}
-                            <div className="w-8 h-8 rounded-full border-2 border-emerald-500 animate-ping absolute opacity-30" />
-                            {/* Pin dot */}
-                            <div className="w-4 h-4 rounded-full bg-emerald-500 border-2 border-emerald-300 shadow-[0_0_15px_rgba(16,185,129,0.6)]" />
-                            {/* Label */}
-                            <div className="mt-2 bg-black/80 border border-emerald-800 rounded px-2 py-1 text-[9px] font-mono text-emerald-400 tracking-widest whitespace-nowrap shadow-[0_0_10px_rgba(16,185,129,0.3)]">
-                                {regionDossierLoading ? 'COMPILING...' : '▶ INTEL TARGET'}
+                    <>
+                        <Marker
+                            longitude={selectedEntity.extra.lng}
+                            latitude={selectedEntity.extra.lat}
+                            anchor="bottom"
+                            style={{ zIndex: 10 }}
+                        >
+                            <div className="flex flex-col items-center pointer-events-none">
+                                <div className="w-8 h-8 rounded-full border-2 border-emerald-500 animate-ping absolute opacity-30" />
+                                <div className="w-4 h-4 rounded-full bg-emerald-500 border-2 border-emerald-300 shadow-[0_0_15px_rgba(16,185,129,0.6)]" />
                             </div>
-                        </div>
-                    </Marker>
+                        </Marker>
+                        {/* Popup chooser — appears after loading completes */}
+                        {!regionDossierLoading && regionDossier && !dossierModal && (
+                            <Popup
+                                longitude={selectedEntity.extra.lng}
+                                latitude={selectedEntity.extra.lat}
+                                closeButton={false}
+                                closeOnClick={false}
+                                onClose={() => onEntityClick(null)}
+                                anchor="bottom"
+                                offset={20}
+                            >
+                                <div className="map-popup border border-emerald-500/40 bg-black/90 min-w-[180px]">
+                                    <div className="map-popup-title text-emerald-400 border-b border-emerald-500/20 pb-1 text-[10px] tracking-widest flex justify-between items-center">
+                                        <span>INTEL TARGET</span>
+                                        <button onClick={() => onEntityClick(null)} className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] ml-2">✕</button>
+                                    </div>
+                                    <div className="flex flex-col gap-1.5 mt-2">
+                                        <button
+                                            onClick={() => setDossierModal('sentinel')}
+                                            disabled={!regionDossier.sentinel2?.found}
+                                            className={`flex items-center gap-2 px-3 py-2 rounded border text-[10px] font-mono tracking-wider transition-colors ${
+                                                regionDossier.sentinel2?.found
+                                                    ? 'border-emerald-500/40 text-emerald-400 hover:bg-emerald-950/40 cursor-pointer'
+                                                    : 'border-[var(--border-primary)] text-[var(--text-muted)] opacity-40 cursor-not-allowed'
+                                            }`}
+                                        >
+                                            <span>🛰️</span> SENTINEL IMAGERY
+                                        </button>
+                                        <button
+                                            onClick={() => setDossierModal('weather')}
+                                            disabled={!regionDossier.weather}
+                                            className={`flex items-center gap-2 px-3 py-2 rounded border text-[10px] font-mono tracking-wider transition-colors ${
+                                                regionDossier.weather
+                                                    ? 'border-cyan-500/40 text-cyan-400 hover:bg-cyan-950/40 cursor-pointer'
+                                                    : 'border-[var(--border-primary)] text-[var(--text-muted)] opacity-40 cursor-not-allowed'
+                                            }`}
+                                        >
+                                            <span>🌤️</span> LOCAL WEATHER
+                                        </button>
+                                    </div>
+                                </div>
+                            </Popup>
+                        )}
+                        {regionDossierLoading && (
+                            <Popup
+                                longitude={selectedEntity.extra.lng}
+                                latitude={selectedEntity.extra.lat}
+                                closeButton={false} closeOnClick={false}
+                                anchor="bottom" offset={20}
+                            >
+                                <div className="map-popup border border-emerald-500/30 bg-black/90">
+                                    <span className="text-emerald-400 text-[9px] font-mono animate-pulse tracking-widest">COMPILING...</span>
+                                </div>
+                            </Popup>
+                        )}
+                    </>
                 )}
 
                 {/* SENTINEL-2 IMAGERY — fullscreen overlay modal */}
-                {selectedEntity?.type === 'region_dossier' && selectedEntity.extra && regionDossier?.sentinel2 && !regionDossierLoading && (() => {
+                {dossierModal === 'sentinel' && selectedEntity?.type === 'region_dossier' && selectedEntity.extra && regionDossier?.sentinel2 && (() => {
                     const s2 = regionDossier.sentinel2;
                     const imgUrl = s2.fullres_url || s2.thumbnail_url;
                     return (
@@ -2149,8 +4152,8 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                                 justifyContent: 'center',
                                 padding: '60px 20px 80px 20px',
                             }}
-                            onClick={(e) => { if (e.target === e.currentTarget) onEntityClick(null); }}
-                            onKeyDown={(e: any) => { if (e.key === 'Escape') onEntityClick(null); }}
+                            onClick={(e) => { if (e.target === e.currentTarget) setDossierModal(null); }}
+                            onKeyDown={(e: any) => { if (e.key === 'Escape') setDossierModal(null); }}
                             tabIndex={-1}
                             ref={(el) => el?.focus()}
                         >
@@ -2185,7 +4188,7 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                                             {selectedEntity.extra.lat.toFixed(4)}, {selectedEntity.extra.lng.toFixed(4)}
                                         </span>
                                         <button
-                                            onClick={() => onEntityClick(null)}
+                                            onClick={() => setDossierModal(null)}
                                             style={{
                                                 background: 'rgba(239,68,68,0.2)',
                                                 border: '1px solid rgba(239,68,68,0.4)',
@@ -2220,21 +4223,109 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                                             <span style={{ color: '#86efac' }}>{s2.cloud_cover?.toFixed(0)}% cloud</span>
                                         </div>
 
-                                        {/* Image */}
-                                        {imgUrl ? (
-                                            <div style={{ flex: 1, overflow: 'auto', display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 400 }}>
-                                                <img
-                                                    src={imgUrl}
-                                                    alt="Sentinel-2 scene"
+                                        {/* Zoomable/pannable image viewer */}
+                                        {imgUrl ? (() => {
+                                            // Inline zoom/pan state via refs for performance
+                                            const containerRef = React.createRef<HTMLDivElement>();
+                                            const stateRef = { scale: 1, panX: 0, panY: 0, dragging: false, lastX: 0, lastY: 0 };
+
+                                            const applyTransform = () => {
+                                                const el = containerRef.current?.querySelector('img') as HTMLImageElement | null;
+                                                if (el) el.style.transform = `translate(${stateRef.panX}px, ${stateRef.panY}px) scale(${stateRef.scale})`;
+                                            };
+
+                                            const handleWheel = (e: React.WheelEvent) => {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                const delta = e.deltaY > 0 ? 0.85 : 1.18;
+                                                const newScale = Math.min(20, Math.max(0.1, stateRef.scale * delta));
+                                                // Zoom toward cursor position
+                                                const rect = containerRef.current?.getBoundingClientRect();
+                                                if (rect) {
+                                                    const cx = e.clientX - rect.left - rect.width / 2;
+                                                    const cy = e.clientY - rect.top - rect.height / 2;
+                                                    const ratio = 1 - newScale / stateRef.scale;
+                                                    stateRef.panX += (cx - stateRef.panX) * ratio;
+                                                    stateRef.panY += (cy - stateRef.panY) * ratio;
+                                                }
+                                                stateRef.scale = newScale;
+                                                applyTransform();
+                                            };
+
+                                            const handleMouseDown = (e: React.MouseEvent) => {
+                                                if (e.button !== 0) return;
+                                                stateRef.dragging = true;
+                                                stateRef.lastX = e.clientX;
+                                                stateRef.lastY = e.clientY;
+                                                e.preventDefault();
+                                            };
+
+                                            const handleMouseMove = (e: React.MouseEvent) => {
+                                                if (!stateRef.dragging) return;
+                                                stateRef.panX += e.clientX - stateRef.lastX;
+                                                stateRef.panY += e.clientY - stateRef.lastY;
+                                                stateRef.lastX = e.clientX;
+                                                stateRef.lastY = e.clientY;
+                                                applyTransform();
+                                            };
+
+                                            const handleMouseUp = () => { stateRef.dragging = false; };
+
+                                            const resetView = () => {
+                                                stateRef.scale = 1; stateRef.panX = 0; stateRef.panY = 0;
+                                                applyTransform();
+                                            };
+
+                                            const zoomIn = () => { stateRef.scale = Math.min(20, stateRef.scale * 1.5); applyTransform(); };
+                                            const zoomOut = () => { stateRef.scale = Math.max(0.1, stateRef.scale / 1.5); applyTransform(); };
+
+                                            const zoomBtnStyle: React.CSSProperties = {
+                                                background: 'rgba(0,0,0,0.7)', border: '1px solid rgba(34,197,94,0.5)',
+                                                borderRadius: 4, color: '#4ade80', fontSize: 14, fontFamily: 'monospace',
+                                                width: 28, height: 28, cursor: 'pointer', display: 'flex',
+                                                alignItems: 'center', justifyContent: 'center',
+                                            };
+
+                                            return (
+                                                <div
+                                                    ref={containerRef}
                                                     style={{
-                                                        maxWidth: '100%',
-                                                        maxHeight: 'calc(100vh - 220px)',
-                                                        objectFit: 'contain',
-                                                        display: 'block',
+                                                        flex: 1, overflow: 'hidden', position: 'relative',
+                                                        cursor: 'grab', minHeight: 400,
+                                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
                                                     }}
-                                                />
-                                            </div>
-                                        ) : (
+                                                    onWheel={handleWheel}
+                                                    onMouseDown={handleMouseDown}
+                                                    onMouseMove={handleMouseMove}
+                                                    onMouseUp={handleMouseUp}
+                                                    onMouseLeave={handleMouseUp}
+                                                >
+                                                    <img
+                                                        src={imgUrl}
+                                                        alt="Sentinel-2 scene"
+                                                        draggable={false}
+                                                        style={{
+                                                            maxWidth: '100%',
+                                                            maxHeight: 'calc(100vh - 220px)',
+                                                            objectFit: 'contain',
+                                                            display: 'block',
+                                                            transformOrigin: 'center center',
+                                                            transition: 'none',
+                                                            userSelect: 'none',
+                                                        }}
+                                                    />
+                                                    {/* Zoom controls */}
+                                                    <div style={{
+                                                        position: 'absolute', bottom: 12, right: 12,
+                                                        display: 'flex', flexDirection: 'column', gap: 4,
+                                                    }}>
+                                                        <button onClick={zoomIn} style={zoomBtnStyle} title="Zoom in">+</button>
+                                                        <button onClick={zoomOut} style={zoomBtnStyle} title="Zoom out">−</button>
+                                                        <button onClick={resetView} style={{ ...zoomBtnStyle, fontSize: 10 }} title="Reset view">⟲</button>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })() : (
                                             <div style={{ padding: '40px 16px', fontSize: 11, color: 'rgba(134,239,172,0.5)', fontFamily: 'monospace', textAlign: 'center' }}>
                                                 Scene found — no preview available
                                             </div>
@@ -2333,6 +4424,17 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                     );
                 })()}
 
+                {/* WEATHER MODAL — fullscreen weather widget */}
+                {dossierModal === 'weather' && selectedEntity?.type === 'region_dossier' && selectedEntity.extra && regionDossier?.weather && (
+                    <WeatherModal
+                        weather={regionDossier.weather}
+                        lat={selectedEntity.extra.lat}
+                        lng={selectedEntity.extra.lng}
+                        locationName={regionDossier?.location?.city || regionDossier?.location?.display_name}
+                        onClose={() => setDossierModal(null)}
+                    />
+                )}
+
                 {/* MEASUREMENT LINES */}
                 {measurePoints && measurePoints.length >= 2 && (
                     <Source id="measure-lines" type="geojson" data={{
@@ -2372,6 +4474,14 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                 ))}
 
             </Map>
+            {/* CCTV seed loading indicator */}
+            {cctvLoading && (
+                <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-[300] pointer-events-none">
+                    <div className="border border-emerald-500/40 bg-black/85 backdrop-blur-sm px-5 py-2 rounded">
+                        <span className="text-emerald-400 text-[10px] font-mono animate-pulse tracking-widest">COMPILING CCTV MESH...</span>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

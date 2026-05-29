@@ -12,6 +12,8 @@ import FilterPanel from "@/components/FilterPanel";
 import FindLocateBar from "@/components/FindLocateBar";
 import TopRightControls from "@/components/TopRightControls";
 import RadioInterceptPanel from "@/components/RadioInterceptPanel";
+import PredictionsPanel from "@/components/PredictionsPanel";
+import GlobalTicker from "@/components/GlobalTicker";
 import SettingsPanel from "@/components/SettingsPanel";
 import MapLegend from "@/components/MapLegend";
 import ScaleBar from "@/components/ScaleBar";
@@ -19,9 +21,11 @@ import ErrorBoundary from "@/components/ErrorBoundary";
 import { DashboardDataProvider } from "@/lib/DashboardDataContext";
 import OnboardingModal, { useOnboarding } from "@/components/OnboardingModal";
 import ChangelogModal, { useChangelog } from "@/components/ChangelogModal";
-import type { SelectedEntity } from "@/types/dashboard";
+import type { SelectedEntity, PikudAlert, BgpAnomaly, CfAnomaly, MilBaseBranch } from "@/types/dashboard";
+import { API_BASE, BACKEND_DIRECT } from "@/lib/api";
 import { NOMINATIM_DEBOUNCE_MS } from "@/lib/constants";
-import { useDataPolling } from "@/hooks/useDataPolling";
+import { useDataPolling, LAYER_TOGGLE_EVENT } from "@/hooks/useDataPolling";
+import type { UkraineAlert } from "@/types/dashboard";
 import { useReverseGeocode } from "@/hooks/useReverseGeocode";
 import { useRegionDossier } from "@/hooks/useRegionDossier";
 
@@ -123,7 +127,68 @@ function LocateBar({ onLocate }: { onLocate: (lat: number, lng: number) => void 
 }
 
 export default function Dashboard() {
-  const { data, dataVersion, backendStatus } = useDataPolling();
+  const [activeLayers, setActiveLayers] = useState({
+    flights: false,
+    private: false,
+    jets: false,
+    military: false,
+    tracked: false,
+    satellites: false,
+    ships_military: false,
+    ships_cargo: false,
+    ships_civilian: false,
+    ships_passenger: false,
+    ships_tracked_yachts: false,
+    trains: false,
+    railway_map: false,
+    earthquakes: false,
+    cctv: false,
+    ukraine_frontline: false,
+    global_incidents: false,
+    day_night: false,
+    gps_jamming: false,
+    gibs_imagery: false,
+    highres_satellite: false,
+    kiwisdr: false,
+    firms: false,
+    internet_outages: false,
+    datacenters: false,
+    military_bases: false,
+    pikud_alerts: false,
+    ukraine_alerts: false,
+    bgp_anomalies: false,
+    cf_anomalies: false,
+    active_ddos: false,
+    weather_radar: false,
+    weather_clouds: false,
+    weather_precipitation: false,
+    weather_pressure: false,
+    weather_wind: false,
+    weather_temperature: false,
+    // New upstream layers
+    scanners: false,
+    power_plants: false,
+    sigint_meshtastic: false,
+    sigint_aprs: false,
+    weather_alerts: false,
+    air_quality: false,
+    volcanoes: false,
+    fishing_activity: false,
+    satnogs: false,
+    tinygs: false,
+    psk_reporter: false,
+    correlations: false,
+    shodan_overlay: false,
+    viirs_nightlights: false,
+    sentinel_hub: false,
+    // New upstream OSINT layers
+    uap_sightings: false,
+    wastewater: false,
+    crowdthreat: false,
+    sar: false,
+  });
+
+  const { data, dataVersion, backendStatus, layerErrors } = useDataPolling(activeLayers);
   const { mouseCoords, locationLabel, handleMouseCoords } = useReverseGeocode();
   const [selectedEntity, setSelectedEntity] = useState<SelectedEntity | null>(null);
   const [trackedSdr, setTrackedSdr] = useState<any>(null);
@@ -138,32 +203,45 @@ export default function Dashboard() {
   const [measureMode, setMeasureMode] = useState(false);
   const [measurePoints, setMeasurePoints] = useState<{ lat: number; lng: number }[]>([]);
 
-  const [activeLayers, setActiveLayers] = useState({
-    flights: true,
-    private: true,
-    jets: true,
-    military: true,
-    tracked: true,
-    satellites: true,
-    ships_military: true,
-    ships_cargo: true,
-    ships_civilian: false,
-    ships_passenger: true,
-    ships_tracked_yachts: true,
-    earthquakes: true,
-    cctv: false,
-    ukraine_frontline: true,
-    global_incidents: true,
-    day_night: true,
-    gps_jamming: true,
-    gibs_imagery: false,
-    highres_satellite: false,
-    kiwisdr: false,
-    firms: false,
-    internet_outages: false,
-    datacenters: false,
-    military_bases: false,
-  });
+  // CCTV on-demand loading — seed cameras when user enables the layer
+  const [cctvLoading, setCctvLoading] = useState(false);
+  const cctvSeeded = useRef(false);
+  useEffect(() => {
+    if (!activeLayers.cctv || cctvSeeded.current) return;
+    if (data?.cctv?.length > 0) { cctvSeeded.current = true; return; }
+    setCctvLoading(true);
+    const controller = new AbortController();
+    fetch(`${API_BASE}/api/cctv/seed`, { signal: controller.signal })
+      .then(r => r.json())
+      .then(d => {
+        if (d.cameras?.length) {
+          data.cctv = d.cameras;
+          cctvSeeded.current = true;
+        }
+        setCctvLoading(false);
+      })
+      .catch(e => { if (e.name !== 'AbortError') { console.error('[cctv seed]', e); setCctvLoading(false); } });
+    return () => controller.abort();
+  }, [activeLayers.cctv, data?.cctv?.length]);
+
+  // Notify backend of layer toggles — dispatch event so useDataPolling immediately
+  // refetches slow-tier data (power plants, GDELT, etc.) without the 120s wait.
+  const layersTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const initialLayerSyncRef = useRef(false);
+  useEffect(() => {
+    if (layersTimerRef.current) clearTimeout(layersTimerRef.current);
+    if (!initialLayerSyncRef.current) {
+      initialLayerSyncRef.current = true;
+    } else {
+      layersTimerRef.current = setTimeout(() => {
+        window.dispatchEvent(new Event(LAYER_TOGGLE_EVENT));
+      }, 250);
+    }
+    return () => { if (layersTimerRef.current) clearTimeout(layersTimerRef.current); };
+  }, [activeLayers]);
+
+  // Military base filter: owner country → enabled branches (built from data on first load)
+  const [milBaseFilter, setMilBaseFilter] = useState<Record<string, Set<MilBaseBranch>>>({});
 
   // NASA GIBS satellite imagery state
   const [gibsDate, setGibsDate] = useState<string>(() => {
@@ -172,6 +250,112 @@ export default function Dashboard() {
     return d.toISOString().slice(0, 10);
   });
   const [gibsOpacity, setGibsOpacity] = useState(0.6);
+
+  // Pikud HaOref time scrubber: null = live mode, negative number = minutes offset from now
+  const [pikudTimeOffset, setPikudTimeOffset] = useState<number | null>(null);
+  const [pikudHistoryData, setPikudHistoryData] = useState<PikudAlert[]>([]);
+  const [pikudDbRange, setPikudDbRange] = useState<{ earliest: number | null; latest: number | null }>({ earliest: null, latest: null });
+
+  // Fetch Pikud DB time range when layer is enabled
+  useEffect(() => {
+    if (!activeLayers.pikud_alerts) return;
+    fetch(`${BACKEND_DIRECT}/api/pikud-alerts/range`)
+      .then(r => r.json())
+      .then(d => setPikudDbRange({ earliest: d.earliest ?? null, latest: d.latest ?? null }))
+      .catch(() => {});
+  }, [activeLayers.pikud_alerts]);
+
+  // Fetch historical slice whenever offset changes
+  useEffect(() => {
+    if (pikudTimeOffset === null) { setPikudHistoryData([]); return; }
+    const controller = new AbortController();
+    const refSec = Date.now() / 1000 + pikudTimeOffset * 60;
+    const from = refSec - 1800;
+    const until = refSec;
+    fetch(`${BACKEND_DIRECT}/api/pikud-alerts/history?from_ts=${from}&until_ts=${until}`, { signal: controller.signal })
+      .then(r => r.json())
+      .then(d => { setPikudHistoryData(d.alerts ?? []); })
+      .catch(e => { if (e.name !== 'AbortError') console.error('[pikud scrub] fetch error:', e); });
+    return () => controller.abort();
+  }, [pikudTimeOffset]);
+
+  // Ukraine time scrubber
+  const [ukraineTimeOffset, setUkraineTimeOffset] = useState<number | null>(null);
+  const [ukraineHistoryData, setUkraineHistoryData] = useState<UkraineAlert[]>([]);
+  const [ukraineDbRange, setUkraineDbRange] = useState<{ earliest: number | null; latest: number | null }>({ earliest: null, latest: null });
+
+  useEffect(() => {
+    if (!activeLayers.ukraine_alerts) return;
+    fetch(`${BACKEND_DIRECT}/api/ukraine-alerts/range`)
+      .then(r => r.json())
+      .then(d => setUkraineDbRange({ earliest: d.earliest ?? null, latest: d.latest ?? null }))
+      .catch(() => {});
+  }, [activeLayers.ukraine_alerts]);
+
+  useEffect(() => {
+    if (ukraineTimeOffset === null) { setUkraineHistoryData([]); return; }
+    const controller = new AbortController();
+    const refSec = Date.now() / 1000 + ukraineTimeOffset * 60;
+    const from = refSec - 1800;
+    const until = refSec;
+    fetch(`${BACKEND_DIRECT}/api/ukraine-alerts/history?from_ts=${from}&until_ts=${until}`, { signal: controller.signal })
+      .then(r => r.json())
+      .then(d => { setUkraineHistoryData(d.alerts ?? []); })
+      .catch(e => { if (e.name !== 'AbortError') console.error('[ukraine scrub] fetch error:', e); });
+    return () => controller.abort();
+  }, [ukraineTimeOffset]);
+
+  // BGP anomalies time scrubber
+  const [bgpTimeOffset, setBgpTimeOffset] = useState<number | null>(null);
+  const [bgpHistoryData, setBgpHistoryData] = useState<BgpAnomaly[]>([]);
+  const [bgpDbRange, setBgpDbRange] = useState<{ earliest: number | null; latest: number | null }>({ earliest: null, latest: null });
+
+  useEffect(() => {
+    if (!activeLayers.bgp_anomalies) return;
+    fetch(`${BACKEND_DIRECT}/api/bgp-anomalies/range`)
+      .then(r => r.json())
+      .then(d => setBgpDbRange({ earliest: d.earliest ?? null, latest: d.latest ?? null }))
+      .catch(() => {});
+  }, [activeLayers.bgp_anomalies]);
+
+  useEffect(() => {
+    if (bgpTimeOffset === null) { setBgpHistoryData([]); return; }
+    const controller = new AbortController();
+    const refSec = Date.now() / 1000 + bgpTimeOffset * 60;
+    const from = refSec - 10800; // 3h window for BGP (events are less frequent)
+    const until = refSec;
+    fetch(`${BACKEND_DIRECT}/api/bgp-anomalies/history?from_ts=${from}&until_ts=${until}`, { signal: controller.signal })
+      .then(r => r.json())
+      .then(d => { setBgpHistoryData(d.events ?? []); })
+      .catch(e => { if (e.name !== 'AbortError') console.error('[bgp scrub] fetch error:', e); });
+    return () => controller.abort();
+  }, [bgpTimeOffset]);
+
+  // CF anomalies time scrubber
+  const [cfTimeOffset, setCfTimeOffset] = useState<number | null>(null);
+  const [cfHistoryData, setCfHistoryData] = useState<CfAnomaly[]>([]);
+  const [cfDbRange, setCfDbRange] = useState<{ earliest: number | null; latest: number | null }>({ earliest: null, latest: null });
+
+  useEffect(() => {
+    if (!activeLayers.cf_anomalies) return;
+    fetch(`${BACKEND_DIRECT}/api/cf-anomalies/range`)
+      .then(r => r.json())
+      .then(d => setCfDbRange({ earliest: d.earliest ?? null, latest: d.latest ?? null }))
+      .catch(() => {});
+  }, [activeLayers.cf_anomalies]);
+
+  useEffect(() => {
+    if (cfTimeOffset === null) { setCfHistoryData([]); return; }
+    const controller = new AbortController();
+    const refSec = Date.now() / 1000 + cfTimeOffset * 60;
+    const from = refSec - 10800;
+    const until = refSec;
+    fetch(`${BACKEND_DIRECT}/api/cf-anomalies/history?from_ts=${from}&until_ts=${until}`, { signal: controller.signal })
+      .then(r => r.json())
+      .then(d => { setCfHistoryData(d.events ?? []); })
+      .catch(e => { if (e.name !== 'AbortError') console.error('[cf scrub] fetch error:', e); });
+    return () => controller.abort();
+  }, [cfTimeOffset]);
 
   const [effects, setEffects] = useState({
     bloom: true,
@@ -233,6 +417,16 @@ export default function Dashboard() {
           measurePoints={measurePoints}
           trackedSdr={trackedSdr}
           setTrackedSdr={setTrackedSdr}
+          pikudTimeOffset={pikudTimeOffset}
+          pikudHistoryData={pikudHistoryData}
+          ukraineTimeOffset={ukraineTimeOffset}
+          ukraineHistoryData={ukraineHistoryData}
+          bgpTimeOffset={bgpTimeOffset}
+          bgpHistoryData={bgpHistoryData}
+          cfTimeOffset={cfTimeOffset}
+          cfHistoryData={cfHistoryData}
+          milBaseFilter={milBaseFilter}
+          cctvLoading={cctvLoading}
         />
       </ErrorBoundary>
 
@@ -280,7 +474,7 @@ export default function Dashboard() {
           >
             {/* LEFT PANEL - DATA LAYERS */}
             <ErrorBoundary name="WorldviewLeftPanel">
-              <WorldviewLeftPanel data={data} activeLayers={activeLayers} setActiveLayers={setActiveLayers} onSettingsClick={() => setSettingsOpen(true)} onLegendClick={() => setLegendOpen(true)} gibsDate={gibsDate} setGibsDate={setGibsDate} gibsOpacity={gibsOpacity} setGibsOpacity={setGibsOpacity} onEntityClick={setSelectedEntity} onFlyTo={(lat, lng) => setFlyToLocation({ lat, lng, ts: Date.now() })} trackedSdr={trackedSdr} setTrackedSdr={setTrackedSdr} />
+              <WorldviewLeftPanel data={data} activeLayers={activeLayers} setActiveLayers={setActiveLayers} layerErrors={layerErrors} onSettingsClick={() => setSettingsOpen(true)} onLegendClick={() => setLegendOpen(true)} gibsDate={gibsDate} setGibsDate={setGibsDate} gibsOpacity={gibsOpacity} setGibsOpacity={setGibsOpacity} onEntityClick={setSelectedEntity} onFlyTo={(lat, lng) => setFlyToLocation({ lat, lng, ts: Date.now() })} trackedSdr={trackedSdr} setTrackedSdr={setTrackedSdr} pikudTimeOffset={pikudTimeOffset} setPikudTimeOffset={setPikudTimeOffset} pikudDbRange={pikudDbRange} ukraineTimeOffset={ukraineTimeOffset} setUkraineTimeOffset={setUkraineTimeOffset} ukraineDbRange={ukraineDbRange} bgpTimeOffset={bgpTimeOffset} setBgpTimeOffset={setBgpTimeOffset} bgpDbRange={bgpDbRange} cfTimeOffset={cfTimeOffset} setCfTimeOffset={setCfTimeOffset} cfDbRange={cfDbRange} milBaseFilter={milBaseFilter} setMilBaseFilter={setMilBaseFilter} />
             </ErrorBoundary>
           </motion.div>
 
@@ -359,6 +553,13 @@ export default function Dashboard() {
                   cameraCenter={cameraCenter}
                   selectedEntity={selectedEntity}
                 />
+              </ErrorBoundary>
+            </div>
+
+            {/* ORACLE PREDICTIONS */}
+            <div className="flex-shrink-0">
+              <ErrorBoundary name="PredictionsPanel">
+                <PredictionsPanel />
               </ErrorBoundary>
             </div>
 
@@ -504,6 +705,13 @@ export default function Dashboard() {
           </span>
         </div>
       )}
+
+      {/* GLOBAL MARKETS TICKER (BOTTOM ANCHOR) */}
+      <div className="absolute bottom-0 left-0 right-0 z-[8000] h-7">
+        <ErrorBoundary name="GlobalTicker">
+          <GlobalTicker />
+        </ErrorBoundary>
+      </div>
 
     </main>
     </DashboardDataProvider>
